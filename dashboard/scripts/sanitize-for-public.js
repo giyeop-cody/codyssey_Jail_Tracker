@@ -60,6 +60,7 @@ if (Array.isArray(data.currentlyInside)) {
 
 if (data.meta) {
   delete data.meta.loggedInAs;
+  delete data.meta.githubSync;
   // 정적 프런트에는 내부 길드 ID나 조회 범위를 노출하지 않고 길드명만 제공한다.
   delete data.meta.guildIds;
   delete data.meta.guildScope;
