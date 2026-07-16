@@ -75,9 +75,13 @@ jobs:
         working-directory: dashboard
         run: |
           mkdir -p _site
-          cp -r public/* _site/
+          # 소개/랜딩 페이지 (index.html)
+          cp public/index.html _site/
+          # 대시보드 본체 (로그인 폼 포함). Pages 정적 호스팅에서는 백엔드가 없어 로그인은 안 되지만
+          # Codespaces/로컬에서 서버 기동 시 사용됨
+          cp public/app.html _site/app.html
+          # 최신 통계 (있으면)
           if [ -f artifacts/latest.json ]; then
-            # 공개용으로 민감필드(이메일, mbrId) 제거 후 배포
             node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
           else
             echo '{"public":true}' > _site/data.json
