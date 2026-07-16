@@ -9,11 +9,16 @@
     }
   },
   "postCreateCommand": "cd dashboard && npm install",
-  // Codespaces는 GITHUB_TOKEN / GITHUB_REPOSITORY 를 자동 주입하지만,
-  // Secret 수정 권한을 가진 PAT는 사용자가 Codespaces Secret GITHUB_TOKEN_SYNC 로 제공해야 함.
-  // 아래에서 GITHUB_TOKEN_SYNC → GITHUB_TOKEN 환경변수로 매핑해 서버가 사용.
-  "postStartCommand": "cd dashboard && GITHUB_TOKEN=\"${localEnv:GITHUB_TOKEN_SYNC:}\" npm start",
+  // Codespaces는 GITHUB_REPOSITORY와 기본 GITHUB_TOKEN을 자동 주입한다.
+  // Actions Secret 수정 권한이 있는 PAT는 Codespaces Secret GH_PAT_SYNC로 받는다.
+  // GH_PAT_SYNC가 있으면 앱의 GITHUB_TOKEN으로 우선 사용하고, 없으면 기본 토큰을 사용한다.
+  "postStartCommand": "cd dashboard && GITHUB_TOKEN=\"${GH_PAT_SYNC:-$GITHUB_TOKEN}\" npm start",
   "waitFor": "postCreateCommand",
+  "secrets": {
+    "GH_PAT_SYNC": {
+      "description": "codyssey_Jail_Tracker의 Actions Secret을 수정할 수 있는 GitHub PAT. 로그인 시 JSESSIONID를 CODYSSEY_SESSION으로 저장합니다."
+    }
+  },
   "customizations": {
     "vscode": {
       "extensions": [],
@@ -22,12 +27,7 @@
       }
     },
     "codespaces": {
-      "openFiles": ["README.md"],
-      "secrets": {
-        "GITHUB_TOKEN_SYNC": {
-          "description": "GitHub Personal Access Token (classic, repo 스코프). 로그인 시 세션을 CODYSSEY_SESSION 시크릿에 자동 업로드"
-        }
-      }
+      "openFiles": ["README.md"]
     }
   }
 }
