@@ -10,6 +10,8 @@ const test = require("node:test");
 const dashboardDir = path.resolve(__dirname, "..");
 const appHtml = fs.readFileSync(path.join(dashboardDir, "public/app.html"), "utf8");
 const appJs = fs.readFileSync(path.join(dashboardDir, "public/app.js"), "utf8");
+const landingHtml = fs.readFileSync(path.join(dashboardDir, "public/index.html"), "utf8");
+const pagesWorkflow = fs.readFileSync(path.join(dashboardDir, "../.github/workflows/pages.yml"), "utf8");
 
 function fixture(year, month, mbrId) {
   return {
@@ -47,6 +49,15 @@ test("공개 UI는 현재 연월을 기본값으로 사용하면서 월별 JSON�
   assert.match(appJs, /currentYear = n\.getUTCFullYear\(\)/);
   assert.match(appJs, /currentMonth = n\.getUTCMonth\(\) \+ 1/);
   assert.doesNotMatch(appJs, /\['year','month'\][\s\S]{0,120}disabled = true/);
+});
+
+test("Fork Pages와 Codespaces 링크가 현재 owner/repository를 사용한다", () => {
+  assert.match(appJs, /function detectPagesRepository\(\)/);
+  assert.match(appJs, /host\.endsWith\('\.github\.io'\)/);
+  assert.match(appJs, /codespaces\/new\/\$\{target\}/);
+  assert.match(pagesWorkflow, /github\.repository_owner/);
+  assert.match(pagesWorkflow, /github\.event\.repository\.name/);
+  assert.match(landingHtml, /session\.githubSync && session\.githubSync\.repository/);
 });
 
 test("정적 사이트 빌드가 여러 월을 보존하고 민감 필드를 제거한다", () => {
