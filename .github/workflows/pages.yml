@@ -1,0 +1,80 @@
+name: Deploy to GitHub Pages
+
+on:
+  workflow_run:
+    workflows: ["Collect SECOM Data"]
+    types:
+      - completed
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  actions: read
+
+concurrency: "pages"
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        working-directory: dashboard
+        run: npm install
+
+      # Collect 워크플로가 업로드한 아티팩트 다운로드 시도
+      - name: Try download collected artifact
+        uses: dawidd6/action-download-artifact@v6
+        if: ${{ github.event_name == 'workflow_run' }}
+        with:
+          name: secom-data-${{ github.event.workflow_run.id }}
+          run_id: ${{ github.event.workflow_run.id }}
+          path: dashboard/artifacts
+        continue-on-error: true
+
+      # 수동 실행이거나 아티팩트가 없으면 라이브로 수집 시도
+      - name: Collect latest data
+        if: ${{ hashFiles('dashboard/artifacts/latest.json') == '' }}
+        working-directory: dashboard
+        env:
+          PORT: 3001
+          CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+          CODYSSEY_GUILDS: ${{ secrets.CODYSSEY_GUILDS || '4' }}
+        run: |
+          mkdir -p artifacts
+          node server.js > /tmp/server.log 2>&1 &
+          sleep 4
+          GUILDS_JSON=$(node -pe "JSON.stringify(process.env.CODYSSEY_GUILDS.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n))")
+          NOW_YEAR=$(date -u +%Y)
+          NOW_MONTH=$(date -u +%m)
+          curl -s -X POST http://localhost:3001/api/aggregate \
+            -H "Content-Type: application/json" \
+            -d "{\"guildIds\":$GUILDS_JSON,\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
+            -o artifacts/latest.json || echo '{}' > artifacts/latest.json
+          pkill -f "node server.js" || true
+
+      - name: Build static site
+        working-directory: dashboard
+        run: |
+          mkdir -p _site
+          cp -r public/* _site/
+          if [ -f artifacts/latest.json ]; then cp artifacts/latest.json _site/data.json; else echo '{}' > _site/data.json; fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard/_site
+      - id: deployment
+        uses: actions/deploy-pages@v4
