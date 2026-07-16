@@ -18,10 +18,11 @@
 
 ### GitHub Pages
 
-1. GitHub Actions가 `CODYSSEY_SESSION`으로 최신 데이터를 수집합니다.
-2. 성공한 데이터를 정제해 GitHub Pages에 배포합니다.
-3. 세션이 없거나 만료되어 데이터가 없으면 Codespace 실행/로그인 버튼을 표시합니다.
-4. Codespace에서 다시 로그인한 후 `Collect SECOM Data`를 실행하면 Pages가 자동 갱신됩니다.
+1. 최초 화면은 항상 현재 KST 연월로 열립니다.
+2. 연도·월 입력 또는 달력의 이전/다음 버튼으로 저장된 과거 월을 조회할 수 있습니다.
+3. GitHub Actions가 `CODYSSEY_SESSION`으로 최신 데이터를 수집하고 `data/YYYY-MM.json`으로 월별 보관합니다.
+4. 기존 Pages 월별 파일을 다음 배포에 병합하므로 지난달 데이터도 유지됩니다.
+5. 세션이 없거나 만료되어 데이터가 없으면 Codespace 실행/로그인 버튼을 표시합니다.
 
 ---
 
@@ -120,6 +121,10 @@ npm start
 - 성공 시 `Deploy to GitHub Pages`가 `app.html`과 정제된 `data.json` 배포
 
 세션이 만료되면 수집 작업은 명확하게 실패하며, GitHub Pages는 Codespace에서 다시 로그인하도록 안내합니다.
+
+### 과거 월 백필
+
+Actions에서 **Collect SECOM Data → Run workflow**를 선택하고 `backfill_from`에 `2026-04`처럼 입력하면 해당 월부터 현재 월까지 한 번에 수집합니다. 예약 실행과 로그인 직후 자동 실행은 현재 월만 갱신하므로 Actions/API 사용량이 불필요하게 증가하지 않습니다.
 
 ### 멤버 및 랭킹 기준
 

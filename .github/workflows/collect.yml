@@ -8,6 +8,12 @@ on:
     # GitHub cron은 UTC 기준이며, 매시 00분/30분에 실행된다.
     - cron: '*/30 * * * *'
   workflow_dispatch:
+    inputs:
+      backfill_from:
+        description: '월별 공개 기록 백필 시작월 (YYYY-MM, 비우면 현재 월만)'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -49,6 +55,7 @@ jobs:
         env:
           PORT: 3000
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+          BACKFILL_FROM: ${{ github.event.inputs.backfill_from || '' }}
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
@@ -75,26 +82,65 @@ jobs:
           NOW_YEAR=$(date +%Y)
           NOW_MONTH=$(date +%m)
           NOW_STAMP=$(date +%Y%m%dT%H%M%S%z)
-          echo "수집 요청: ${NOW_YEAR}-${NOW_MONTH}, guilds=[3,4,5,6] (고정 통합)"
+          mkdir -p artifacts/months
 
-          curl --silent --show-error --fail-with-body \
-            --max-time 180 \
-            -X POST http://localhost:3000/api/aggregate \
-            -H "Content-Type: application/json" \
-            -d "{\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
-            -o artifacts/latest.json
+          TARGET_MONTHS=$(node - <<'NODE'
+          const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+          const endYear = now.getUTCFullYear();
+          const endMonth = now.getUTCMonth() + 1;
+          const raw = (process.env.BACKFILL_FROM || '').trim();
+          let startYear = endYear, startMonth = endMonth;
+          if (raw) {
+            const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(raw);
+            if (!match) throw new Error('backfill_from은 YYYY-MM 형식이어야 합니다.');
+            startYear = Number(match[1]);
+            startMonth = Number(match[2]);
+          }
+          const startIndex = startYear * 12 + startMonth - 1;
+          const endIndex = endYear * 12 + endMonth - 1;
+          if (startIndex > endIndex) throw new Error('backfill_from은 현재 월보다 미래일 수 없습니다.');
+          if (endIndex - startIndex >= 24) throw new Error('한 번에 최대 24개월까지만 백필할 수 있습니다.');
+          const months = [];
+          for (let i = startIndex; i <= endIndex; i++) {
+            const year = Math.floor(i / 12);
+            const month = i % 12 + 1;
+            months.push(`${year}-${String(month).padStart(2, '0')}`);
+          }
+          process.stdout.write(months.join(' '));
+          NODE
+          )
 
-          node - <<'NODE'
-          const data = require('./artifacts/latest.json');
-          if (data.error) throw new Error(data.error);
-          const ids = (data.meta && data.meta.guildIds || []).join(',');
+          echo "수집 대상 월: ${TARGET_MONTHS}, guilds=[3,4,5,6] (고정 통합)"
+          for YM in $TARGET_MONTHS; do
+            YEAR=${YM%-*}
+            MONTH=${YM#*-}
+            OUTPUT="artifacts/months/${YM}.json"
+            echo "수집 요청: ${YM}"
+
+            curl --silent --show-error --fail-with-body \
+              --max-time 180 \
+              -X POST http://localhost:3000/api/aggregate \
+              -H "Content-Type: application/json" \
+              -d "{\"year\":$YEAR,\"month\":$((10#$MONTH))}" \
+              -o "$OUTPUT"
+
+            node - "$OUTPUT" <<'NODE'
+          const file = process.argv[2];
+          const data = require(require('path').resolve(file));
+          if (data.error || !data.meta || !Array.isArray(data.members)) {
+            throw new Error(data.error || `수집 데이터 형식 오류: ${file}`);
+          }
+          const ids = (data.meta.guildIds || []).join(',');
           if (ids !== '3,4,5,6') throw new Error(`잘못된 길드 범위: ${ids}`);
           if (!Array.isArray(data.meta.guilds) || data.meta.guilds.length !== 4) {
             throw new Error(`3·4·5·6길드 중 일부 조회 실패: ${data.meta.guilds && data.meta.guilds.length || 0}/4`);
           }
-          console.log(`수집 완료: ${data.meta.totalActiveMembers}/${data.meta.totalMembers}명 활동, 길드 4개 통합`);
+          console.log(`${data.meta.year}-${String(data.meta.month).padStart(2,'0')} 완료: ${data.meta.totalActiveMembers}/${data.meta.totalMembers}명 활동`);
           NODE
+          done
 
+          CURRENT_KEY="${NOW_YEAR}-${NOW_MONTH}"
+          cp "artifacts/months/${CURRENT_KEY}.json" artifacts/latest.json
           cp artifacts/latest.json "artifacts/secom_${NOW_YEAR}-${NOW_MONTH}_${NOW_STAMP}.json"
 
       - name: Upload collected data
