@@ -11,8 +11,8 @@ const express = require("express");
 const cors = require("cors");
 const fetch = require("node-fetch");
 const setCookie = require("set-cookie-parser");
-const sodium = require("libsodium-wrappers");
 const path = require("path");
+const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
 
 const fs = require("fs");
@@ -26,27 +26,8 @@ const CACHE_TTL_MS = 2 * 60 * 1000;
 // TRACKED_GUILD_IDS는 클라이언트 입력으로 변경할 수 없는 서버 고정 범위다.
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
 
-// GitHub Secret 자동 동기화 설정
-// Codespaces에서는 반드시 사용자가 등록한 GH_PAT_SYNC를 사용한다.
-// 기본 GITHUB_TOKEN으로 조용히 대체하면 권한 부족을 Secret 설정 오류로 오인하기 쉽기 때문이다.
-// 로컬 실행에서만 GITHUB_TOKEN을 대체 수단으로 허용한다.
-const IS_CODESPACES = process.env.CODESPACES === "true";
-const GITHUB_TOKEN_SOURCE = process.env.GH_PAT_SYNC
-  ? "GH_PAT_SYNC"
-  : (!IS_CODESPACES && process.env.GITHUB_TOKEN ? "GITHUB_TOKEN" : "none");
-const GITHUB_TOKEN = GITHUB_TOKEN_SOURCE === "GH_PAT_SYNC"
-  ? process.env.GH_PAT_SYNC
-  : (GITHUB_TOKEN_SOURCE === "GITHUB_TOKEN" ? process.env.GITHUB_TOKEN : "");
-const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "";
-let githubSyncStatus = {
-  enabled: false,
-  configured: false,
-  tokenSource: GITHUB_TOKEN_SOURCE,
-  lastSync: null,
-  lastWorkflowDispatch: null,
-  workflowTriggered: false,
-  lastError: null,
-};
+// Secret 암호화·업로드와 workflow_dispatch는 독립 서비스로 분리한다.
+const githubSync = createGitHubSyncService({ fetchImpl: fetch, env: process.env });
 
 app.use(cors());
 app.use(express.json());
@@ -263,108 +244,10 @@ async function doLoginWithCredentials(userId, password) {
   return false;
 }
 
-async function githubApiError(res) {
-  const text = await res.text().catch(() => "");
-  if (!text) return `HTTP ${res.status}`;
-  try {
-    const data = JSON.parse(text);
-    return `${res.status} ${data.message || text}`;
-  } catch (e) {
-    return `${res.status} ${text}`;
-  }
-}
-
-/**
- * GitHub Actions 시크릿 CODYSSEY_SESSION 에 현재 JSESSIONID를 자동 업로드.
- * - libsodium으로 SealedBox 암호화 필요
- * - PAT에는 Repository Secrets 쓰기와 Actions 쓰기 권한이 모두 필요함
- * - Secret 저장 직후 Collect SECOM Data workflow_dispatch를 호출함
- * - 대상 리포는 Codespaces 기본 환경변수 GITHUB_REPOSITORY에서 자동 확인
- */
 async function syncSessionToGitHub() {
-  const jsid = session.cookies["JSESSIONID"] && session.cookies["JSESSIONID"].value;
-  if (!jsid) {
-    githubSyncStatus.lastError = "No JSESSIONID to sync";
-    return false;
-  }
-  const token = GITHUB_TOKEN;
-  const repo = GITHUB_REPOSITORY;
-  if (!token || !repo) {
-    githubSyncStatus.configured = false;
-    githubSyncStatus.enabled = false;
-    githubSyncStatus.lastError = !token && IS_CODESPACES
-      ? "Codespaces Secret GH_PAT_SYNC가 현재 컨테이너에 주입되지 않았습니다. Codespace를 Stop 후 Start하거나 컨테이너를 Rebuild하세요."
-      : "GH_PAT_SYNC/GITHUB_TOKEN 또는 GITHUB_REPOSITORY가 설정되지 않았습니다.";
-    return false;
-  }
-  githubSyncStatus.configured = true;
-  githubSyncStatus.workflowTriggered = false;
-  let secretUploaded = false;
-
-  try {
-    const repoApi = `https://api.github.com/repos/${repo}`;
-    const secretApi = `${repoApi}/actions/secrets`;
-    const headers = {
-      Authorization: `token ${token}`,
-      Accept: "application/vnd.github+json",
-      "User-Agent": "secom-dashboard",
-      "X-GitHub-Api-Version": "2022-11-28",
-    };
-
-    // 1. Repository Actions Secret 공개키 조회
-    const keyRes = await fetch(secretApi + "/public-key", { headers });
-    if (!keyRes.ok) {
-      throw new Error(`Repository Secrets 공개키 조회 실패: ${await githubApiError(keyRes)}`);
-    }
-    const keyData = await keyRes.json();
-
-    // 2. JSESSIONID 암호화
-    await sodium.ready;
-    const binkey = sodium.from_base64(keyData.key, sodium.base64_variants.ORIGINAL);
-    const binsec = sodium.from_string(jsid);
-    const encBytes = sodium.crypto_box_seal(binsec, binkey);
-    const encrypted = sodium.to_base64(encBytes, sodium.base64_variants.ORIGINAL);
-
-    // 3. CODYSSEY_SESSION 생성 또는 갱신
-    const putRes = await fetch(secretApi + "/CODYSSEY_SESSION", {
-      method: "PUT",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        encrypted_value: encrypted,
-        key_id: keyData.key_id,
-      }),
-    });
-    if (!putRes.ok && putRes.status !== 201 && putRes.status !== 204) {
-      throw new Error(`CODYSSEY_SESSION 저장 실패: ${await githubApiError(putRes)}`);
-    }
-    secretUploaded = true;
-    githubSyncStatus.lastSync = new Date().toISOString();
-    console.log(`[github-sync] ✅ CODYSSEY_SESSION 업로드 완료 (repo: ${repo})`);
-
-    // Secret 수정 자체는 workflow를 실행하지 않으므로 직접 workflow_dispatch를 요청한다.
-    const dispatchRes = await fetch(`${repoApi}/actions/workflows/collect.yml/dispatches`, {
-      method: "POST",
-      headers: { ...headers, "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: "main" }),
-    });
-    if (dispatchRes.status !== 204) {
-      throw new Error(`Collect workflow 실행 요청 실패: ${await githubApiError(dispatchRes)}. PAT의 Actions: Read and write 권한을 확인하세요.`);
-    }
-
-    githubSyncStatus.lastWorkflowDispatch = new Date().toISOString();
-    githubSyncStatus.workflowTriggered = true;
-    githubSyncStatus.enabled = true;
-    githubSyncStatus.lastError = null;
-    console.log("[github-sync] ✅ Collect SECOM Data 실행 요청 완료");
-    return true;
-  } catch (err) {
-    githubSyncStatus.lastError = secretUploaded
-      ? `CODYSSEY_SESSION 저장은 완료됐지만 Actions 실행에 실패했습니다: ${err.message}`
-      : err.message;
-    githubSyncStatus.enabled = false;
-    console.error("[github-sync] ❌", githubSyncStatus.lastError);
-    return false;
-  }
+  const sessionId = session.cookies["JSESSIONID"] && session.cookies["JSESSIONID"].value;
+  const result = await githubSync.syncSession(sessionId);
+  return result.success;
 }
 
 // ---------- 자동 로그인 (파일/환경변수) ----------
@@ -443,24 +326,15 @@ app.get("/api/session", async (req, res) => {
     cookieCount: Object.keys(session.cookies).length,
     authMode: process.env.CODYSSEY_SESSION ? "session-env" :
               (process.env.CODYSSEY_ID && process.env.CODYSSEY_PW ? "credentials-env" : "interactive"),
-    githubSync: {
-      enabled: githubSyncStatus.enabled,
-      configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
-      tokenSource: githubSyncStatus.tokenSource,
-      lastSync: githubSyncStatus.lastSync,
-      lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
-      workflowTriggered: githubSyncStatus.workflowTriggered,
-      lastError: githubSyncStatus.lastError,
-      repository: GITHUB_REPOSITORY,
-    },
+    githubSync: githubSync.getStatus(),
   });
 });
 
 app.post("/api/sync-github", async (req, res) => {
-  if (!session.cookies["JSESSIONID"]) return res.status(400).json({ success: false, error: "먼저 로그인해주세요." });
-  const ok = await syncSessionToGitHub();
-  const error = ok ? null : githubSyncStatus.lastError;
-  res.status(ok ? 200 : 502).json({ success: ok, error, ...githubSyncStatus });
+  const sessionId = session.cookies["JSESSIONID"] && session.cookies["JSESSIONID"].value;
+  if (!sessionId) return res.status(400).json({ success: false, error: "먼저 로그인해주세요." });
+  const result = await githubSync.syncSession(sessionId);
+  res.status(result.success ? 200 : 502).json(result);
 });
 
 app.post("/api/login", async (req, res) => {
@@ -475,12 +349,13 @@ app.post("/api/login", async (req, res) => {
       // 로그인 응답 전에 JSESSIONID를 Repository Secret에 복사한다.
       // 실패해도 대시보드 로그인은 유지하되 UI가 동기화 오류를 명확히 안내한다.
       const githubSynced = await syncSessionToGitHub();
+      const syncStatus = githubSync.getStatus();
       return res.json({
         success: true,
         userId,
         githubSynced,
-        workflowTriggered: githubSyncStatus.workflowTriggered,
-        githubSyncError: githubSynced ? null : githubSyncStatus.lastError,
+        workflowTriggered: syncStatus.workflowTriggered,
+        githubSyncError: githubSynced ? null : syncStatus.lastError,
       });
     }
     invalidateSession("interactive login failed");
@@ -765,16 +640,7 @@ app.post("/api/aggregate", async (req, res) => {
         loggedInAs: session.userId,
         authMode: process.env.CODYSSEY_SESSION ? "session-env" :
                   (process.env.CODYSSEY_ID ? "credentials-env" : "interactive"),
-        githubSync: {
-          enabled: githubSyncStatus.enabled,
-          configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
-          tokenSource: githubSyncStatus.tokenSource,
-          lastSync: githubSyncStatus.lastSync,
-          lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
-          workflowTriggered: githubSyncStatus.workflowTriggered,
-          lastError: githubSyncStatus.lastError,
-          repository: GITHUB_REPOSITORY,
-        },
+        githubSync: githubSync.getStatus(),
       },
       members: members.sort((a,b)=>b.totalSeconds-a.totalSeconds),
       topMembers: members.filter(m=>m.totalSeconds>0).sort((a,b)=>b.totalSeconds-a.totalSeconds).slice(0,50),

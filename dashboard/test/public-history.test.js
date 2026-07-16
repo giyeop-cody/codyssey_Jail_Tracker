@@ -9,6 +9,7 @@ const test = require("node:test");
 
 const dashboardDir = path.resolve(__dirname, "..");
 const appHtml = fs.readFileSync(path.join(dashboardDir, "public/app.html"), "utf8");
+const appJs = fs.readFileSync(path.join(dashboardDir, "public/app.js"), "utf8");
 
 function fixture(year, month, mbrId) {
   return {
@@ -39,11 +40,13 @@ function fixture(year, month, mbrId) {
 }
 
 test("공개 UI는 현재 연월을 기본값으로 사용하면서 월별 JSON을 조회한다", () => {
-  assert.match(appHtml, /async function loadPublicData\(year, month\)/);
-  assert.match(appHtml, /fetch\(`data\/\$\{key\}\.json`/);
-  assert.match(appHtml, /currentYear = n\.getUTCFullYear\(\)/);
-  assert.match(appHtml, /currentMonth = n\.getUTCMonth\(\) \+ 1/);
-  assert.doesNotMatch(appHtml, /\['year','month'\][\s\S]{0,120}disabled = true/);
+  assert.match(appHtml, /app\.css/);
+  assert.match(appHtml, /app\.js/);
+  assert.match(appJs, /async function loadPublicData\(year, month\)/);
+  assert.match(appJs, /fetch\(`data\/\$\{key\}\.json`/);
+  assert.match(appJs, /currentYear = n\.getUTCFullYear\(\)/);
+  assert.match(appJs, /currentMonth = n\.getUTCMonth\(\) \+ 1/);
+  assert.doesNotMatch(appJs, /\['year','month'\][\s\S]{0,120}disabled = true/);
 });
 
 test("정적 사이트 빌드가 여러 월을 보존하고 민감 필드를 제거한다", () => {
@@ -71,6 +74,8 @@ test("정적 사이트 빌드가 여러 월을 보존하고 민감 필드를 제
   assert.match(april.members[0]._publicId, /^m[0-9a-f]{10}$/);
   assert.equal("guildIds" in april.meta, false);
   assert.equal(fs.existsSync(path.join(site, "data.json")), true);
+  assert.equal(fs.existsSync(path.join(site, "app.css")), true);
+  assert.equal(fs.existsSync(path.join(site, "app.js")), true);
 
   fs.rmSync(root, { recursive: true, force: true });
 });
