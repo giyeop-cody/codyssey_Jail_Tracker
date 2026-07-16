@@ -13,7 +13,7 @@
 1. Codespaces(또는 로컬)에서 대시보드 서버를 띄움
 2. 브라우저에서 codyssey 아이디/비번으로 로그인
 3. ✅ 로그인 성공과 동시에 **서버가 자동으로 JSESSIONID를 GitHub Secret `CODYSSEY_SESSION`에 업로드**
-4. GitHub Actions가 매시 자동 실행될 때 이 최신 세션을 사용 (캐시가 있으면 캐시, 없으면 Secret에서 부트스트랩)
+4. GitHub Actions가 30분마다 실행되며 GitHub Secret `CODYSSEY_SESSION`의 최신 세션을 직접 사용
 5. 세션이 만료되면 대시보드에 다시 로그인만 하면 됨 → 수동으로 쿠키를 복사하거나 Secrets에 들어가 편집할 필요가 **전혀 없음**
 
 ---
@@ -47,11 +47,13 @@ GITHUB_TOKEN을 넣지 않아도 대시보드 자체는 사용 가능하지만, 
 
 ## ⏰ GitHub Actions 자동 수집
 
-대시보드에서 한 번 로그인하면, 이후로는 매시 KST 05분에 자동 실행되어:
+대시보드에서 한 번 로그인하면 이후 GitHub Actions가 매시 00분과 30분에 자동 실행되어:
 
-- 세션이 살아있으면 바로 데이터 수집
-- 캐시가 없으면 Secret `CODYSSEY_SESSION` 값으로 세션을 초기화
-- 세션이 만료되어 실패하면 대시보드에 로그인 한 번 해주면 다음 실행부터 다시 동작
+- Secret `CODYSSEY_SESSION`에 저장된 세션으로 데이터 수집
+- 3·4·5·6길드 멤버를 통합 집계
+- `app.html`과 정제된 `data.json`을 GitHub Pages 루트에 배포
+- 세션이 만료되어 실패하면 대시보드에 다시 로그인하여 Secret을 갱신
+- 필요하면 Actions 화면에서 두 워크플로를 `workflow_dispatch`로 즉시 수동 실행
 
 **따로 설정할 Secret:**
 - 조회 대상 길드는 서버와 Actions에서 `3,4,5,6`으로 고정되며 하나의 통합 랭킹으로 집계됩니다.
@@ -62,7 +64,8 @@ GITHUB_TOKEN을 넣지 않아도 대시보드 자체는 사용 가능하지만, 
 
 ### 주의
 - 대시보드와 Actions가 같은 리포지토리를 가리켜야 자동 동기화됩니다.
-- Actions Cache는 7일간 접근 없으면 만료되므로, 매일 1회 이상 실행돼야 영구 유지됩니다.
+- Repository Secret `CODYSSEY_SESSION`이 반드시 설정되어 있어야 합니다.
+- GitHub Actions 예약 실행은 GitHub 사정에 따라 정각보다 몇 분 늦게 시작될 수 있습니다.
 - PAT는 반드시 본인만 사용하는 개인 리포에서만 사용하세요. Public/공유 리포에는 사용하지 마세요.
 
 ---
@@ -73,7 +76,8 @@ GITHUB_TOKEN을 넣지 않아도 대시보드 자체는 사용 가능하지만, 
 ├── .devcontainer/
 │   └── devcontainer.json    # Codespaces 자동 설정 + GITHUB_TOKEN_SYNC 시크릿 연동
 ├── .github/workflows/
-│   └── collect.yml          # Actions 수집 (Secret/캐시로 세션 영구 유지)
+│   ├── collect.yml          # 30분 주기 수집 (CODYSSEY_SESSION Secret 사용)
+│   └── pages.yml            # app.html 정적 대시보드를 Pages 루트에 배포
 ├── dashboard/
 │   ├── server.js            # Express 백엔드 + 로그인 + GitHub Secret 자동동기화
 │   ├── package.json

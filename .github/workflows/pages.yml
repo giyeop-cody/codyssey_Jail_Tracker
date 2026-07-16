@@ -1,94 +1,145 @@
 name: Deploy to GitHub Pages
 
 on:
+  # 30분 수집 워크플로가 성공할 때마다 최신 data.json으로 정적 페이지를 재배포한다.
   workflow_run:
     workflows: ["Collect SECOM Data"]
-    types:
-      - completed
+    types: [completed]
+  # Actions 화면에서 즉시 수동 갱신할 수 있다.
   workflow_dispatch:
+  # 대시보드 UI 변경도 바로 정적 페이지에 반영한다.
   push:
     branches: [main]
     paths:
       - 'dashboard/public/**'
+      - 'dashboard/server.js'
       - 'dashboard/scripts/**'
+      - 'dashboard/package.json'
+      - 'dashboard/package-lock.json'
       - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
-  actions: read
 
-concurrency: "pages"
+concurrency:
+  group: pages
+  cancel-in-progress: true
 
 jobs:
   deploy:
-    # public/app.html 변경 push도 즉시 배포한다. 기존 조건은 push 이벤트를 항상 skip했다.
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
 
-      - name: Install deps
+      - name: Install dependencies
         working-directory: dashboard
-        run: npm install
+        run: npm ci
 
-      # Collect 워크플로가 업로드한 아티팩트 다운로드 시도
-      - name: Try download collected artifact
-        uses: dawidd6/action-download-artifact@v6
+      - name: Download latest collection artifact
         if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
         with:
           name: secom-data-${{ github.event.workflow_run.id }}
-          run_id: ${{ github.event.workflow_run.id }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           path: dashboard/artifacts
-        continue-on-error: true
 
-      # 수동 실행이거나 아티팩트가 없으면 라이브로 수집 시도
-      - name: Collect latest data
-        if: ${{ hashFiles('dashboard/artifacts/latest.json') == '' }}
+      # push 또는 workflow_dispatch 실행에는 연결된 수집 아티팩트가 없으므로 Secret으로 즉시 수집한다.
+      - name: Collect data for direct deployment
+        if: ${{ github.event_name != 'workflow_run' }}
         working-directory: dashboard
         env:
           PORT: 3001
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+          TZ: Asia/Seoul
         run: |
-          mkdir -p artifacts
-          node server.js > /tmp/server.log 2>&1 &
-          sleep 4
-          NOW_YEAR=$(date -u +%Y)
-          NOW_MONTH=$(date -u +%m)
-          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=[3,4,5,6] (고정 통합)"
-          curl -s -X POST http://localhost:3001/api/aggregate \
-            -H "Content-Type: application/json" \
-            --max-time 180 \
-            -d "{\"guildIds\":[3,4,5,6],\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
-            -o artifacts/latest.json || echo '{"public":true,"members":[]}' > artifacts/latest.json
-          pkill -f "node server.js" || true
-
-      - name: Build static site
-        working-directory: dashboard
-        run: |
-          mkdir -p _site
-          # 대시보드 본체를 루트와 /app 양쪽에 배치 (어느 경로로 접속해도 대시보드가 열림)
-          cp public/app.html _site/index.html
-          cp public/app.html _site/app.html
-          # 최신 통계 (있으면)
-          if [ -f artifacts/latest.json ]; then
-            node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
-          else
-            echo '{"public":true,"members":[]}' > _site/data.json
+          set -euo pipefail
+          if [ -z "$CODYSSEY_SESSION" ]; then
+            echo "::error::Repository Secret CODYSSEY_SESSION이 설정되지 않았습니다."
+            exit 1
           fi
 
+          mkdir -p artifacts
+          node server.js > /tmp/server.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          for i in $(seq 1 20); do
+            if curl --silent --fail http://localhost:3001/api/session > /tmp/session.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          LOGGED_IN=$(node -e "const d=require('/tmp/session.json'); process.stdout.write(String(d.loggedIn === true))")
+          if [ "$LOGGED_IN" != "true" ]; then
+            echo "::error::CODYSSEY_SESSION이 없거나 만료되었습니다."
+            cat /tmp/server.log
+            exit 1
+          fi
+
+          NOW_YEAR=$(date +%Y)
+          NOW_MONTH=$(date +%m)
+          curl --silent --show-error --fail-with-body \
+            --max-time 180 \
+            -X POST http://localhost:3001/api/aggregate \
+            -H "Content-Type: application/json" \
+            -d "{\"guildIds\":[3,4,5,6],\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
+            -o artifacts/latest.json
+
+      - name: Validate collected data
+        working-directory: dashboard
+        run: |
+          node - <<'NODE'
+          const data = require('./artifacts/latest.json');
+          if (data.error || !data.meta || !Array.isArray(data.members)) {
+            throw new Error(data.error || '수집 데이터 형식이 올바르지 않습니다.');
+          }
+          const ids = (data.meta.guildIds || []).join(',');
+          if (ids !== '3,4,5,6') throw new Error(`잘못된 길드 범위: ${ids}`);
+          if (!Array.isArray(data.meta.guilds) || data.meta.guilds.length !== 4) {
+            throw new Error(`3·4·5·6길드 중 일부 조회 실패: ${data.meta.guilds && data.meta.guilds.length || 0}/4`);
+          }
+          console.log(`정적 페이지 데이터 확인: 길드 4개, 멤버 ${data.members.length}명`);
+          NODE
+
+      - name: Build static dashboard
+        working-directory: dashboard
+        run: |
+          rm -rf _site
+          mkdir -p _site
+
+          # GitHub Pages 루트는 소개 페이지가 아닌 app.html 정적 대시보드로 제공한다.
+          cp public/app.html _site/index.html
+          cp public/app.html _site/app.html
+          node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
+          touch _site/.nojekyll
+
+          test -s _site/index.html
+          test -s _site/data.json
+
       - uses: actions/configure-pages@v5
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dashboard/_site
-      - id: deployment
+
+      - name: Deploy static dashboard
+        id: deployment
         uses: actions/deploy-pages@v4
