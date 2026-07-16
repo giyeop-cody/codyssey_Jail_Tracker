@@ -434,13 +434,44 @@ function publicSessionSetupHtml(message) {
     </div>`;
 }
 
-async function loadPublicData() {
-  // 정적 모드: data.json 을 불러와 바로 렌더
-  const res = await fetch('data.json', { cache: 'no-store' });
-  if (!res.ok) throw new Error('공개 데이터가 아직 없습니다 (첫 수집 대기 중)');
+function publicMonthUnavailableHtml(year, month, message) {
+  return `
+    <div class="grid">
+      <div class="card span-12" style="max-width:760px;margin:40px auto;text-align:center;padding:36px 28px">
+        <div style="font-size:42px;margin-bottom:12px">📅</div>
+        <h2 style="font-size:22px;margin-bottom:10px">${year}년 ${month}월 기록이 없습니다</h2>
+        <p style="color:var(--muted);line-height:1.8;margin:0 auto 20px">${message || '아직 공개 저장된 월별 데이터가 없습니다.'}</p>
+        <button onclick="goThisMonth()" style="background:var(--accent);color:white;border:0;border-radius:10px;padding:11px 18px;font-weight:700;cursor:pointer">
+          이번 달로 돌아가기
+        </button>
+      </div>
+    </div>`;
+}
+
+async function loadPublicData(year, month) {
+  const key = `${year}-${String(month).padStart(2, '0')}`;
+  let res = await fetch(`data/${key}.json`, { cache: 'no-store' });
+
+  // 월별 아카이브 도입 전 배포본과의 일시적인 호환을 위해 현재 data.json도 확인한다.
+  if (res.status === 404) {
+    const fallback = await fetch('data.json', { cache: 'no-store' });
+    if (fallback.ok) {
+      const data = await fallback.json();
+      if (data.meta && Number(data.meta.year) === Number(year) && Number(data.meta.month) === Number(month)) {
+        return data;
+      }
+    }
+    const err = new Error(`${year}년 ${month}월 데이터가 아직 수집되지 않았습니다.`);
+    err.code = 'MONTH_NOT_FOUND';
+    throw err;
+  }
+  if (!res.ok) throw new Error(`공개 데이터 조회 실패 (HTTP ${res.status})`);
+
   const data = await res.json();
   if (!data.members || data.members.length === 0) {
-    throw new Error('아직 수집된 데이터가 없습니다. 첫 GitHub Actions 수집이 완료되면 표시됩니다.');
+    const err = new Error('아직 수집된 데이터가 없습니다. Codespace에서 로그인하면 자동 수집됩니다.');
+    err.code = 'SESSION_REQUIRED';
+    throw err;
   }
   return data;
 }
@@ -538,15 +569,24 @@ function avatarHtml(m) {
 
 async function loadData() {
   if (PUBLIC_MODE) {
-    // 정적 모드: 이미 boot 시점에 불러온 DATA 를 그대로 다시 렌더 (새로고침은 data.json 재요청)
-    document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>데이터를 불러오는 중...</div>';
+    const year = parseInt(document.getElementById('year').value, 10);
+    const month = parseInt(document.getElementById('month').value, 10);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
+      document.getElementById('app').innerHTML = '<div class="empty-state">올바른 연도와 월을 입력해주세요.</div>';
+      return;
+    }
+
+    currentYear = year;
+    currentMonth = month;
+    document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>월별 데이터를 불러오는 중...</div>';
     try {
-      DATA = await loadPublicData();
-      currentYear = DATA.meta.year;
-      currentMonth = DATA.meta.month;
+      DATA = await loadPublicData(year, month);
       render();
     } catch (err) {
-      document.getElementById('app').innerHTML = publicSessionSetupHtml(err.message);
+      DATA = null;
+      document.getElementById('app').innerHTML = err.code === 'MONTH_NOT_FOUND'
+        ? publicMonthUnavailableHtml(year, month, err.message)
+        : publicSessionSetupHtml(err.message);
     }
     return;
   }
@@ -673,7 +713,7 @@ function render() {
       <div class="card span-8">
         <div class="cal-head">
           <div class="cal-title" id="calTitle"></div>
-          <div class="cal-nav" ${PUBLIC_MODE ? 'style="display:none"' : ''}>
+          <div class="cal-nav">
             <button onclick="changeMonth(-1)">‹</button>
             <button onclick="goThisMonth()">오늘</button>
             <button onclick="changeMonth(1)">›</button>
@@ -959,24 +999,19 @@ async function boot() {
       <a class="gh-sync-btn" href="${CODESPACE_URL}" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">🚀 Codespaces로 라이브 보기</a>
     </span>`;
 
-    // 공개 뷰에서는 연/월 고정 (이번 달 데이터만 제공)
-    ['year','month'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.disabled = true;
-    });
+    // 공개 뷰도 연/월을 선택할 수 있지만 최초 진입은 항상 현재 KST 연월이다.
+    const n = new Date(Date.now() + 9*3600*1000);
+    currentYear = n.getUTCFullYear();
+    currentMonth = n.getUTCMonth() + 1;
+    document.getElementById('year').disabled = false;
+    document.getElementById('month').disabled = false;
+    document.getElementById('year').value = currentYear;
+    document.getElementById('month').value = currentMonth;
 
     document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>공개 데이터 로딩 중...</div>';
-    try {
-      DATA = await loadPublicData();
-      currentYear = DATA.meta.year; currentMonth = DATA.meta.month;
-      document.getElementById('year').value = currentYear;
-      document.getElementById('month').value = currentMonth;
-      render();
-      if (REFRESH_TIMER) clearInterval(REFRESH_TIMER);
-      REFRESH_TIMER = setInterval(() => { if (DATA) loadData(); }, 5*60*1000);
-    } catch (err) {
-      document.getElementById('app').innerHTML = publicSessionSetupHtml(err.message);
-    }
+    await loadData();
+    if (REFRESH_TIMER) clearInterval(REFRESH_TIMER);
+    REFRESH_TIMER = setInterval(() => loadData(), 5*60*1000);
     return;
   }
 

@@ -57,5 +57,5 @@ test("동기화 실패 시 서버의 실제 GitHub API 오류를 표시한다", 
 test("정적 Pages에 세션이 없으면 Codespace 로그인 버튼을 표시한다", () => {
   assert.match(appHtml, /function publicSessionSetupHtml\(message\)/);
   assert.match(appHtml, /Codespace 실행하고 로그인하기/);
-  assert.match(appHtml, /document\.getElementById\('app'\)\.innerHTML = publicSessionSetupHtml\(err\.message\)/);
+  assert.match(appHtml, /publicSessionSetupHtml\(err\.message\)/);
 });

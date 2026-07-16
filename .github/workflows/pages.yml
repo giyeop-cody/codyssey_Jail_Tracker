@@ -70,7 +70,7 @@ jobs:
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
-          mkdir -p artifacts
+          mkdir -p artifacts/months
           if [ -z "$CODYSSEY_SESSION" ]; then
             echo "::warning::CODYSSEY_SESSION이 없어 앱 UI만 먼저 배포합니다. Secret 등록 후 실제 데이터로 자동 갱신됩니다."
             node - <<'NODE'
@@ -90,7 +90,11 @@ jobs:
             records: {topDayByAttendance: null, topDayByHours: null, topWeek: null, peakHour: null},
             currentlyInside: []
           };
-          require('fs').writeFileSync('artifacts/latest.json', JSON.stringify(data));
+          const fs = require('fs');
+          const key = `${year}-${String(month).padStart(2,'0')}`;
+          fs.mkdirSync('artifacts/months', {recursive: true});
+          fs.writeFileSync('artifacts/latest.json', JSON.stringify(data));
+          fs.writeFileSync(`artifacts/months/${key}.json`, JSON.stringify(data));
           NODE
             exit 0
           fi
@@ -115,43 +119,49 @@ jobs:
 
           NOW_YEAR=$(date +%Y)
           NOW_MONTH=$(date +%m)
+          CURRENT_KEY="${NOW_YEAR}-${NOW_MONTH}"
           curl --silent --show-error --fail-with-body \
             --max-time 180 \
             -X POST http://localhost:3001/api/aggregate \
             -H "Content-Type: application/json" \
             -d "{\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
-            -o artifacts/latest.json
+            -o "artifacts/months/${CURRENT_KEY}.json"
+          cp "artifacts/months/${CURRENT_KEY}.json" artifacts/latest.json
 
       - name: Validate collected data
         working-directory: dashboard
         run: |
           node - <<'NODE'
-          const data = require('./artifacts/latest.json');
-          if (data.error || !data.meta || !Array.isArray(data.members)) {
-            throw new Error(data.error || '수집 데이터 형식이 올바르지 않습니다.');
+          const fs = require('fs');
+          const path = require('path');
+          const dir = './artifacts/months';
+          const files = fs.existsSync(dir)
+            ? fs.readdirSync(dir).filter(name => /^\d{4}-(0[1-9]|1[0-2])\.json$/.test(name))
+            : [];
+          if (!files.length) throw new Error('월별 수집 데이터가 없습니다.');
+          for (const name of files) {
+            const data = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+            if (data.error || !data.meta || !Array.isArray(data.members)) {
+              throw new Error(data.error || `${name}: 수집 데이터 형식이 올바르지 않습니다.`);
+            }
+            const ids = (data.meta.guildIds || []).join(',');
+            if (ids !== '3,4,5,6') throw new Error(`${name}: 잘못된 길드 범위: ${ids}`);
+            if (!Array.isArray(data.meta.guilds) || data.meta.guilds.length !== 4) {
+              throw new Error(`${name}: 3·4·5·6길드 중 일부 조회 실패`);
+            }
+            console.log(`${name}: 길드 4개, 멤버 ${data.members.length}명`);
           }
-          const ids = (data.meta.guildIds || []).join(',');
-          if (ids !== '3,4,5,6') throw new Error(`잘못된 길드 범위: ${ids}`);
-          if (!Array.isArray(data.meta.guilds) || data.meta.guilds.length !== 4) {
-            throw new Error(`3·4·5·6길드 중 일부 조회 실패: ${data.meta.guilds && data.meta.guilds.length || 0}/4`);
-          }
-          console.log(`정적 페이지 데이터 확인: 길드 4개, 멤버 ${data.members.length}명`);
           NODE
 
-      - name: Build static dashboard
+      - name: Build static dashboard with monthly history
         working-directory: dashboard
+        env:
+          PUBLIC_SITE_URL: https://giyeop-cody.github.io/codyssey_Jail_Tracker
         run: |
-          rm -rf _site
-          mkdir -p _site
-
-          # GitHub Pages 루트는 소개 페이지가 아닌 app.html 정적 대시보드로 제공한다.
-          cp public/app.html _site/index.html
-          cp public/app.html _site/app.html
-          node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
-          touch _site/.nojekyll
-
+          node scripts/build-public-history.js artifacts _site "$PUBLIC_SITE_URL"
           test -s _site/index.html
           test -s _site/data.json
+          test -s _site/data/index.json
 
       - uses: actions/configure-pages@v5
 
