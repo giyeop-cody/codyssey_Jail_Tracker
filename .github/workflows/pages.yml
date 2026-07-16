@@ -57,34 +57,38 @@ jobs:
         env:
           PORT: 3001
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
-          CODYSSEY_GUILDS: ${{ secrets.CODYSSEY_GUILDS || '4' }}
+          CODYSSEY_GUILDS: ${{ secrets.CODYSSEY_GUILDS }}
         run: |
           mkdir -p artifacts
           node server.js > /tmp/server.log 2>&1 &
           sleep 4
-          GUILDS_JSON=$(node -pe "JSON.stringify(process.env.CODYSSEY_GUILDS.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n))")
           NOW_YEAR=$(date -u +%Y)
           NOW_MONTH=$(date -u +%m)
+          if [ -n "$CODYSSEY_GUILDS" ]; then
+            GUILDS_JSON=$(node -pe "JSON.stringify(process.env.CODYSSEY_GUILDS.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n))")
+          else
+            GUILDS_JSON='[3,4,5,6]'
+          fi
+          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=$GUILDS_JSON"
           curl -s -X POST http://localhost:3001/api/aggregate \
             -H "Content-Type: application/json" \
+            --max-time 180 \
             -d "{\"guildIds\":$GUILDS_JSON,\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
-            -o artifacts/latest.json || echo '{}' > artifacts/latest.json
+            -o artifacts/latest.json || echo '{"public":true,"members":[]}' > artifacts/latest.json
           pkill -f "node server.js" || true
 
       - name: Build static site
         working-directory: dashboard
         run: |
           mkdir -p _site
-          # 소개/랜딩 페이지 (index.html)
-          cp public/index.html _site/
-          # 대시보드 본체 (로그인 폼 포함). Pages 정적 호스팅에서는 백엔드가 없어 로그인은 안 되지만
-          # Codespaces/로컬에서 서버 기동 시 사용됨
+          # 대시보드 본체를 루트와 /app 양쪽에 배치 (어느 경로로 접속해도 대시보드가 열림)
+          cp public/app.html _site/index.html
           cp public/app.html _site/app.html
           # 최신 통계 (있으면)
           if [ -f artifacts/latest.json ]; then
             node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
           else
-            echo '{"public":true}' > _site/data.json
+            echo '{"public":true,"members":[]}' > _site/data.json
           fi
 
       - uses: actions/configure-pages@v5
