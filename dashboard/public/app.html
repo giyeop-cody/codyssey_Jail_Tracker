@@ -529,7 +529,7 @@ function render() {
 
   const collectedAt = m.collectedAt || DATA.publishedAt;
   const collectedLabel = PUBLIC_MODE
-    ? ` · 최종 갱신 ${new Date(collectedAt).toLocaleString('ko-KR')} (매시 자동)`
+    ? ` · 최종 갱신 ${new Date(collectedAt).toLocaleString('ko-KR')} (30분마다 자동)`
     : ` · ${new Date(collectedAt).toLocaleString('ko-KR')} 기준`;
   document.getElementById('metaInfo').textContent =
     `${scopeLabel} · ${m.year}년 ${m.month}월 · ${m.totalActiveMembers}/${m.totalMembers}명 활동${collectedLabel}`;
@@ -883,7 +883,7 @@ async function boot() {
 
     // 공개 뷰 배지 삽입
     const userInfo = document.getElementById('userInfo');
-    userInfo.innerHTML = `<span class="gh-status ok" title="GitHub Pages에서 제공되는 읽기 전용 공개 뷰입니다. 매시간 자동 갱신">
+    userInfo.innerHTML = `<span class="gh-status ok" title="GitHub Pages에서 제공되는 읽기 전용 공개 뷰입니다. 30분마다 자동 갱신">
       🌐 공개 뷰 (읽기 전용)
       <a class="gh-sync-btn" href="https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json" target="_blank" style="text-decoration:none;color:inherit">🚀 Codespaces로 라이브 보기</a>
     </span>`;
