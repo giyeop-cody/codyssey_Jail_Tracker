@@ -70,12 +70,31 @@ jobs:
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
+          mkdir -p artifacts
           if [ -z "$CODYSSEY_SESSION" ]; then
-            echo "::error::Repository Secret CODYSSEY_SESSION이 설정되지 않았습니다."
-            exit 1
+            echo "::warning::CODYSSEY_SESSION이 없어 앱 UI만 먼저 배포합니다. Secret 등록 후 실제 데이터로 자동 갱신됩니다."
+            node - <<'NODE'
+          const now = new Date();
+          const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+          const year = kst.getUTCFullYear();
+          const month = kst.getUTCMonth() + 1;
+          const guildIds = [3, 4, 5, 6];
+          const guilds = guildIds.map(guildId => ({ guildId, guildName: `길드 ${guildId}` }));
+          const data = {
+            placeholder: true,
+            meta: { year, month, guildIds, guildScope: 'fixed-3-6', guilds,
+                    totalMembers: 0, totalActiveMembers: 0, collectedAt: now.toISOString() },
+            members: [], topMembers: [], daily: [], weekly: [],
+            hourly: Array.from({length: 24}, (_, hour) => ({hour, label: `${String(hour).padStart(2,'0')}:00`, totalPersonSeconds: 0, totalPersonHours: 0})),
+            weekday: ['일','월','화','수','목','금','토'].map((dayName, day) => ({day, dayName, totalSeconds: 0, totalHours: 0})),
+            records: {topDayByAttendance: null, topDayByHours: null, topWeek: null, peakHour: null},
+            currentlyInside: []
+          };
+          require('fs').writeFileSync('artifacts/latest.json', JSON.stringify(data));
+          NODE
+            exit 0
           fi
 
-          mkdir -p artifacts
           node server.js > /tmp/server.log 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
