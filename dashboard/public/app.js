@@ -5,7 +5,20 @@ let currentYear = new Date().getFullYear();
 let PUBLIC_MODE = false;       // GitHub Pages 정적 뷰
 let MEMBER_KEY = 'mbrId';      // 라이브는 'mbrId', 공개는 '_publicId'
 let REFRESH_TIMER = null;
-const CODESPACE_URL = 'https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json';
+function detectPagesRepository() {
+  const host = window.location.hostname.toLowerCase();
+  if (!host.endsWith('.github.io')) return null;
+  const owner = host.slice(0, -'.github.io'.length);
+  const repository = window.location.pathname.split('/').filter(Boolean)[0];
+  return owner && repository ? `${owner}/${repository}` : null;
+}
+
+function codespaceUrl(repository = detectPagesRepository()) {
+  const target = repository || 'giyeop-cody/codyssey_Jail_Tracker';
+  return `https://github.com/codespaces/new/${target}?devcontainer_path=.devcontainer%2Fdevcontainer.json`;
+}
+
+const CODESPACE_URL = codespaceUrl();
 
 async function checkSession() {
   try {

@@ -38,7 +38,7 @@
     <div class="sub">codyssey.kr SECOM 출입/학습시간 대시보드</div>
   </div>
   <a class="open-btn" href="/app" style="margin-right:8px">🎯 대시보드 로그인</a>
-  <a class="open-btn" href="https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json" target="_blank">🚀 Codespaces</a>
+  <a class="open-btn" id="codespacesBtn" href="https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json" target="_blank">🚀 Codespaces</a>
 </header>
 <main>
   <div class="hero">
@@ -87,11 +87,23 @@
   </div>
 
   <div class="footer">
-    Jail Tracker · SECOM 통합 랭킹 · <a href="https://github.com/giyeop-cody/codyssey_Jail_Tracker" style="color:var(--accent2)">GitHub 리포</a>
+    Jail Tracker · SECOM 통합 랭킹 · <a id="repositoryLink" href="https://github.com/giyeop-cody/codyssey_Jail_Tracker" style="color:var(--accent2)">GitHub 리포</a>
   </div>
 </main>
 <script>
 (async function(){
+  try {
+    const sessionRes = await fetch('/api/session', {cache:'no-store'});
+    if (sessionRes.ok) {
+      const session = await sessionRes.json();
+      const repository = session.githubSync && session.githubSync.repository;
+      if (repository) {
+        document.getElementById('codespacesBtn').href = `https://github.com/codespaces/new/${repository}?devcontainer_path=.devcontainer%2Fdevcontainer.json`;
+        document.getElementById('repositoryLink').href = `https://github.com/${repository}`;
+      }
+    }
+  } catch(e) { /* 정적 환경에서는 원본 링크 유지 */ }
+
   try {
     const r = await fetch('data.json', {cache:'no-store'});
     if (!r.ok) return;

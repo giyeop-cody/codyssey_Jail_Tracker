@@ -156,7 +156,7 @@ jobs:
       - name: Build static dashboard with monthly history
         working-directory: dashboard
         env:
-          PUBLIC_SITE_URL: https://giyeop-cody.github.io/codyssey_Jail_Tracker
+          PUBLIC_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
         run: |
           node scripts/build-public-history.js artifacts _site "$PUBLIC_SITE_URL"
           test -s _site/index.html
