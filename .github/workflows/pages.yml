@@ -23,7 +23,8 @@ concurrency: "pages"
 
 jobs:
   deploy:
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    # public/app.html 변경 push도 즉시 배포한다. 기존 조건은 push 이벤트를 항상 skip했다.
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -57,23 +58,17 @@ jobs:
         env:
           PORT: 3001
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
-          CODYSSEY_GUILDS: ${{ secrets.CODYSSEY_GUILDS }}
         run: |
           mkdir -p artifacts
           node server.js > /tmp/server.log 2>&1 &
           sleep 4
           NOW_YEAR=$(date -u +%Y)
           NOW_MONTH=$(date -u +%m)
-          if [ -n "$CODYSSEY_GUILDS" ]; then
-            GUILDS_JSON=$(node -pe "JSON.stringify(process.env.CODYSSEY_GUILDS.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n))")
-          else
-            GUILDS_JSON='[3,4,5,6]'
-          fi
-          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=$GUILDS_JSON"
+          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=[3,4,5,6] (고정 통합)"
           curl -s -X POST http://localhost:3001/api/aggregate \
             -H "Content-Type: application/json" \
             --max-time 180 \
-            -d "{\"guildIds\":$GUILDS_JSON,\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
+            -d "{\"guildIds\":[3,4,5,6],\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
             -o artifacts/latest.json || echo '{"public":true,"members":[]}' > artifacts/latest.json
           pkill -f "node server.js" || true
 

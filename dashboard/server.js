@@ -23,6 +23,9 @@ const API_BASE = "https://api.usr.codyssey.kr";
 const AUTH_URL = "https://api.ams.codyssey.kr/authenticate";
 const MAIN_ORIGIN = "https://usr.codyssey.kr";
 const CACHE_TTL_MS = 2 * 60 * 1000;
+// Jail Tracker는 길드 선택 없이 3·4·5·6 길드 전체를 항상 통합 조회한다.
+// 클라이언트나 Actions가 다른 guildIds를 보내더라도 이 범위를 변경하지 않는다.
+const TRACKED_GUILD_IDS = Object.freeze([3, 4, 5, 6]);
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
 
 // GitHub Secret 자동 동기화 설정
@@ -510,12 +513,12 @@ app.post("/api/aggregate", async (req, res) => {
     if (!session.cookies["JSESSIONID"]) {
       return res.status(401).json({ error: "로그인이 필요합니다", requireAuth: true });
     }
-    const { guildIds, seasonId = 5, weekNo = 9,
+    const { seasonId = 5, weekNo = 9,
             year = new Date().getFullYear(), month = new Date().getMonth() + 1 } = req.body || {};
 
-    // 기본 길드 목록 (고정)
-    const DEFAULT_GUILDS = [3,4,5,6];
-    let targetGuildIds = Array.isArray(guildIds) && guildIds.length ? guildIds : DEFAULT_GUILDS;
+    // 요청 본문의 guildIds/allGuilds는 의도적으로 무시한다.
+    // UI, Actions, 외부 호출 모두 항상 3·4·5·6 길드 멤버를 하나의 memberMap으로 합친다.
+    const targetGuildIds = [...TRACKED_GUILD_IDS];
 
     const guilds = [];
     const memberMap = new Map();
@@ -651,7 +654,10 @@ app.post("/api/aggregate", async (req, res) => {
 
     res.json({
       meta: {
-        year, month, guildIds: targetGuildIds, allGuilds, guilds,
+        year, month,
+        guildIds: targetGuildIds,
+        guildScope: "fixed-3-6",
+        guilds,
         totalMembers: members.length,
         totalActiveMembers: members.filter(m=>m.totalSeconds>0).length,
         collectedAt: new Date().toISOString(), todayStr,
