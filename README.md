@@ -1,97 +1,144 @@
 # 🎯 SECOM 출입 대시보드
 
-> 코디시(codyssey.kr) 길드 멤버들의 출입/학습 시간(SECOM)을 시각화하는 웹 대시보드
+> 코디시(codyssey.kr) 3·4·5·6길드 멤버들의 출입/학습 시간을 하나로 통합해 보여주는 대시보드
 
-[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=자신의리포주소&devcontainer_path=.devcontainer%2Fdevcontainer.json)
-
----
-
-## ✨ 핵심: 대시보드에서 로그인만 하면 Actions까지 자동 반영
-
-가장 편한 워크플로입니다:
-
-1. Codespaces(또는 로컬)에서 대시보드 서버를 띄움
-2. 브라우저에서 codyssey 아이디/비번으로 로그인
-3. ✅ 로그인 성공과 동시에 **서버가 자동으로 JSESSIONID를 GitHub Secret `CODYSSEY_SESSION`에 업로드**
-4. GitHub Actions가 30분마다 실행되며 GitHub Secret `CODYSSEY_SESSION`의 최신 세션을 직접 사용
-5. 세션이 만료되면 대시보드에 다시 로그인만 하면 됨 → 수동으로 쿠키를 복사하거나 Secrets에 들어가 편집할 필요가 **전혀 없음**
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json)
 
 ---
 
-## 🚀 로컬 실행
+## 동작 흐름
+
+### Codespace
+
+1. 저장된 Codyssey 세션이 없거나 만료되면 로그인 폼을 표시합니다.
+2. Codyssey 계정으로 로그인해 새 `JSESSIONID`를 받습니다.
+3. 서버가 `JSESSIONID`를 Repository Actions Secret `CODYSSEY_SESSION`으로 생성/갱신합니다.
+4. 3·4·5·6길드를 모두 조회하고 멤버를 하나의 대시보드로 통합합니다.
+
+### GitHub Pages
+
+1. GitHub Actions가 `CODYSSEY_SESSION`으로 최신 데이터를 수집합니다.
+2. 성공한 데이터를 정제해 GitHub Pages에 배포합니다.
+3. 세션이 없거나 만료되어 데이터가 없으면 Codespace 실행/로그인 버튼을 표시합니다.
+4. Codespace에서 다시 로그인한 후 `Collect SECOM Data`를 실행하면 Pages가 자동 갱신됩니다.
+
+---
+
+## 최초 1회 GitHub 설정
+
+### 1. Fine-grained PAT 발급
+
+GitHub **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**에서 생성합니다.
+
+- **Repository access**: `Only select repositories`
+- 대상 저장소: `giyeop-cody/codyssey_Jail_Tracker`
+- **Repository permissions → Secrets**: `Read and write`
+- 만료 기간은 가능한 짧게 설정
+
+Classic PAT를 사용한다면 `repo` 스코프가 필요합니다.
+
+### 2. Codespaces Secret 등록
+
+저장소의 **Settings → Secrets and variables → Codespaces → New repository secret**으로 이동합니다.
+
+| 항목 | 값 |
+|---|---|
+| Name | `GH_PAT_SYNC` |
+| Secret | 위에서 발급한 PAT |
+
+> GitHub Secret 이름은 `GITHUB_`로 시작할 수 없으므로 반드시 `GH_PAT_SYNC`를 사용합니다.
+
+`GITHUB_REPOSITORY`는 Codespaces가 `owner/repo` 형식으로 자동 제공하므로 별도 Secret 등록이 필요 없습니다.
+
+Secret을 새로 등록하거나 수정했다면 실행 중인 Codespace를 **Stop한 후 다시 Start**해야 반영됩니다.
+
+### 3. Codespace 실행 및 최초 로그인
+
+1. 저장소에서 **Code → Codespaces → Create codespace on main**
+2. 포트 3000의 `/app.html` 열기
+3. Codyssey 계정으로 로그인
+4. 상단의 `GitHub 연동됨` 확인
+5. 저장소 **Settings → Secrets and variables → Actions**에서 `CODYSSEY_SESSION` 생성 확인
+6. **Actions → Collect SECOM Data → Run workflow** 실행
+
+`CODYSSEY_SESSION` 값은 직접 등록하지 않습니다. Codespace 로그인 서버가 자동으로 생성하고 세션 만료 때마다 갱신합니다.
+
+---
+
+## Codespace 문제 확인
+
+```bash
+# Secret 주입 여부: 값 자체는 출력하지 않음
+if [ -n "${GH_PAT_SYNC:-}" ]; then echo "GH_PAT_SYNC=set"; else echo "GH_PAT_SYNC=missing"; fi
+
+echo "$GITHUB_REPOSITORY"
+# 예상: giyeop-cody/codyssey_Jail_Tracker
+```
+
+최신 코드로 서버를 다시 실행하려면:
+
+```bash
+cd /workspaces/codyssey_Jail_Tracker
+git pull origin main
+cd dashboard
+npm ci
+npm test
+pkill -f 'node server.js' || true
+GITHUB_TOKEN="$GH_PAT_SYNC" GITHUB_REPOSITORY="giyeop-cody/codyssey_Jail_Tracker" npm start
+```
+
+---
+
+## 로컬 실행
 
 ```bash
 cd dashboard
 npm install
-# 선택사항: 대시보드에서 로그인 시 자동으로 GitHub Secret에 세션을 동기화하고 싶으면
-# GitHub Personal Access Token (classic, repo 스코프) 을 환경변수로 넣어서 기동
-export GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-export GITHUB_REPOSITORY=owner/repo
-npm start          # http://localhost:3000
+
+# Secret 자동 동기화를 사용할 때만 설정
+export GITHUB_TOKEN=github_pat_xxxxxxxxxxxx
+export GITHUB_REPOSITORY=giyeop-cody/codyssey_Jail_Tracker
+
+npm start
 ```
 
-GITHUB_TOKEN을 넣지 않아도 대시보드 자체는 사용 가능하지만, Actions와의 자동 연동은 비활성화됩니다.
+브라우저에서 http://localhost:3000/app.html 접속
 
 ---
 
-## ☁️ GitHub Codespaces (한 클릭 실행)
+## GitHub Actions
 
-1. 저장소를 본인 GitHub 계정으로 Fork
-2. Fork한 리포에서 **Settings → Secrets and variables → Codespaces → New secret**
-   - Name: `GITHUB_TOKEN_SYNC`
-   - Value: GitHub Personal Access Token(classic, `repo` 스코프)
-3. **Code → Codespaces → Create codespace on main**
-4. 1~2분 후 자동으로 서버가 기동되고 브라우저에 대시보드가 열림 → 로그인하면 자동으로 세션이 Secret에 업로드
+`Collect SECOM Data`가 30분마다 실행되어:
 
----
+- Actions Secret `CODYSSEY_SESSION`으로 인증
+- 3·4·5·6길드 멤버를 `mbrId` 기준으로 중복 제거 및 통합
+- 수집 결과를 `secom-data-<runid>` 아티팩트로 업로드
+- 성공 시 `Deploy to GitHub Pages`가 `app.html`과 정제된 `data.json` 배포
 
-## ⏰ GitHub Actions 자동 수집
-
-대시보드에서 한 번 로그인하면 이후 GitHub Actions가 매시 00분과 30분에 자동 실행되어:
-
-- Secret `CODYSSEY_SESSION`에 저장된 세션으로 데이터 수집
-- 3·4·5·6길드 멤버를 통합 집계
-- `app.html`과 정제된 `data.json`을 GitHub Pages 루트에 배포
-- 세션이 만료되어 실패하면 대시보드에 다시 로그인하여 Secret을 갱신
-- 필요하면 Actions 화면에서 두 워크플로를 `workflow_dispatch`로 즉시 수동 실행
-
-**따로 설정할 Secret:**
-- 조회 대상 길드는 서버와 Actions에서 `3,4,5,6`으로 고정되며 하나의 통합 랭킹으로 집계됩니다.
-- `GITHUB_TOKEN_SYNC` (Codespaces용 PAT. 로컬에서는 `GITHUB_TOKEN` 환경변수로 사용)
-- `CODYSSEY_SESSION`은 **자동으로 생성/갱신됨** (수동으로 넣지 마세요!)
-
-결과는 Actions 실행 페이지에서 `secom-data-<runid>` 아티팩트로 다운로드할 수 있습니다.
-
-### 주의
-- 대시보드와 Actions가 같은 리포지토리를 가리켜야 자동 동기화됩니다.
-- Repository Secret `CODYSSEY_SESSION`이 반드시 설정되어 있어야 합니다.
-- GitHub Actions 예약 실행은 GitHub 사정에 따라 정각보다 몇 분 늦게 시작될 수 있습니다.
-- PAT는 반드시 본인만 사용하는 개인 리포에서만 사용하세요. Public/공유 리포에는 사용하지 마세요.
+세션이 만료되면 수집 작업은 명확하게 실패하며, GitHub Pages는 Codespace에서 다시 로그인하도록 안내합니다.
 
 ---
 
-## 📁 프로젝트 구조
+## 프로젝트 구조
 
-```
+```text
 ├── .devcontainer/
-│   └── devcontainer.json    # Codespaces 자동 설정 + GITHUB_TOKEN_SYNC 시크릿 연동
+│   └── devcontainer.json    # Codespaces 설정 + GH_PAT_SYNC 연동
 ├── .github/workflows/
-│   ├── collect.yml          # 30분 주기 수집 (CODYSSEY_SESSION Secret 사용)
-│   └── pages.yml            # app.html 정적 대시보드를 Pages 루트에 배포
+│   ├── collect.yml          # 30분 주기 통합 수집
+│   └── pages.yml            # 정적 대시보드 배포
 ├── dashboard/
-│   ├── server.js            # Express 백엔드 + 로그인 + GitHub Secret 자동동기화
-│   ├── package.json
-│   └── public/
-│       └── index.html       # 대시보드 UI (GitHub 연동 상태 표시)
-├── collect_*.js             # CLI 수집 스크립트
-├── .gitignore
+│   ├── lib/                 # 고정 길드 및 통합 로직
+│   ├── public/app.html      # 로그인/라이브/정적 대시보드 UI
+│   ├── scripts/             # 공개 데이터 정제
+│   ├── test/                # 회귀 테스트
+│   └── server.js            # 인증, 집계, Secret 자동 갱신
 └── README.md
 ```
 
----
+## 보안
 
-## 🔒 보안
-- 아이디/비밀번호는 대시보드 서버 → codyssey.kr 직접 전송 (제3자 경유 없음).
-- GITHUB_TOKEN/PAT가 있으면 세션(JSESSIONID)만 GitHub API를 통해 리포 Secret `CODYSSEY_SESSION`에 sodium SealedBox 암호화해 업로드합니다. 아이디/비밀번호는 GitHub에 절대 올라가지 않습니다.
-- 세션 파일 `.session-cookies.json`은 `.gitignore`에 포함되어 커밋되지 않습니다.
-- GitHub Secrets는 AES 암호화 저장, 로그 마스킹, Fork PR 격리가 적용됩니다.
+- Codyssey 아이디/비밀번호는 대시보드 서버에서 Codyssey 인증 서버로만 전달됩니다.
+- GitHub에는 비밀번호가 아닌 `JSESSIONID`만 암호화된 Actions Secret으로 저장됩니다.
+- `.session-cookies.json`은 `.gitignore` 대상입니다.
+- PAT는 저장소 Secret으로만 등록하고 코드, 터미널 로그, 채팅에 붙여 넣지 마세요.

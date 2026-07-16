@@ -40,4 +40,11 @@ test("로그인 응답 전에 새 JSESSIONID를 GitHub Secret에 동기화한다
   const loginRoute = sourceBetween(serverSource, 'app.post("/api/login"', 'app.post("/api/logout"');
   assert.match(loginRoute, /const githubSynced = await syncSessionToGitHub\(\)/);
   assert.match(loginRoute, /githubSyncError/);
+  assert.match(serverSource, /process\.env\.GH_PAT_SYNC \|\| process\.env\.GITHUB_TOKEN/);
+});
+
+test("정적 Pages에 세션이 없으면 Codespace 로그인 버튼을 표시한다", () => {
+  assert.match(appHtml, /function publicSessionSetupHtml\(message\)/);
+  assert.match(appHtml, /Codespace 실행하고 로그인하기/);
+  assert.match(appHtml, /document\.getElementById\('app'\)\.innerHTML = publicSessionSetupHtml\(err\.message\)/);
 });

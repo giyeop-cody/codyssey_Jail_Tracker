@@ -27,9 +27,10 @@ const CACHE_TTL_MS = 2 * 60 * 1000;
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
 
 // GitHub Secret 자동 동기화 설정
-// 환경변수 GITHUB_TOKEN (PAT, repo 권한 필요) 가 있으면 로그인 후 자동으로 시크릿을 업데이트
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN || "";
-const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || ""; // "owner/repo" 형식. 미설정 시 Codespaces/GitHub 환경에서 자동 감지
+// Codespaces Secret GH_PAT_SYNC를 우선 사용한다. GITHUB_REPOSITORY는 Codespaces가 자동 제공한다.
+// 로컬에서는 기존처럼 GITHUB_TOKEN / GITHUB_REPOSITORY를 직접 지정할 수 있다.
+const GITHUB_TOKEN = process.env.GH_PAT_SYNC || process.env.GITHUB_TOKEN || "";
+const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "";
 let githubSyncStatus = {
   enabled: false,
   configured: false,
@@ -255,8 +256,8 @@ async function doLoginWithCredentials(userId, password) {
 /**
  * GitHub Actions 시크릿 CODYSSEY_SESSION 에 현재 JSESSIONID를 자동 업로드.
  * - libsodium으로 SealedBox 암호화 필요
- * - GITHUB_TOKEN 환경변수에 repo 권한 PAT 또는 GITHUB_TOKEN이 있어야 함
- * - 대상 리포: 환경변수 GITHUB_REPOSITORY 또는 Codespaces/GITHUB_REPOSITORY
+ * - Codespaces에서는 GH_PAT_SYNC, 로컬에서는 GITHUB_TOKEN에 Secret 수정 권한 PAT가 있어야 함
+ * - 대상 리포는 Codespaces 기본 환경변수 GITHUB_REPOSITORY에서 자동 확인
  */
 async function syncSessionToGitHub() {
   const jsid = session.cookies["JSESSIONID"] && session.cookies["JSESSIONID"].value;
@@ -264,17 +265,12 @@ async function syncSessionToGitHub() {
     githubSyncStatus.lastError = "No JSESSIONID to sync";
     return false;
   }
-  let token = GITHUB_TOKEN;
-  // Codespaces에서는 사용자가 발급한 GITHUB_TOKEN을 사용 (기본 GITHUB_TOKEN은 워크플로 내 토큰이라 권한이 다를 수 있음)
-  let repo = GITHUB_REPOSITORY;
-  if (!repo) {
-    // Codespaces 환경변수들로 리포 추출 시도
-    repo = process.env.GITHUB_REPOSITORY;
-  }
+  const token = GITHUB_TOKEN;
+  const repo = GITHUB_REPOSITORY;
   if (!token || !repo) {
     githubSyncStatus.configured = false;
     githubSyncStatus.enabled = false;
-    githubSyncStatus.lastError = "GITHUB_TOKEN or GITHUB_REPOSITORY not configured";
+    githubSyncStatus.lastError = "GH_PAT_SYNC 또는 GITHUB_REPOSITORY가 설정되지 않았습니다";
     return false;
   }
   githubSyncStatus.configured = true;
@@ -418,7 +414,7 @@ app.get("/api/session", async (req, res) => {
 app.post("/api/sync-github", async (req, res) => {
   if (!session.cookies["JSESSIONID"]) return res.status(400).json({ success: false, error: "먼저 로그인해주세요." });
   if (!GITHUB_TOKEN || !GITHUB_REPOSITORY) {
-    return res.status(400).json({ success: false, error: "GITHUB_TOKEN / GITHUB_REPOSITORY 환경변수가 설정되지 않았습니다." });
+    return res.status(400).json({ success: false, error: "Codespaces Secret GH_PAT_SYNC 또는 GITHUB_REPOSITORY가 설정되지 않았습니다." });
   }
   const ok = await syncSessionToGitHub();
   res.json({ success: ok, ...githubSyncStatus });
