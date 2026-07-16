@@ -6,6 +6,12 @@ on:
     types:
       - completed
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'dashboard/public/**'
+      - 'dashboard/scripts/**'
+      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
