@@ -70,7 +70,12 @@ jobs:
         run: |
           mkdir -p _site
           cp -r public/* _site/
-          if [ -f artifacts/latest.json ]; then cp artifacts/latest.json _site/data.json; else echo '{}' > _site/data.json; fi
+          if [ -f artifacts/latest.json ]; then
+            # 공개용으로 민감필드(이메일, mbrId) 제거 후 배포
+            node scripts/sanitize-for-public.js artifacts/latest.json _site/data.json
+          else
+            echo '{"public":true}' > _site/data.json
+          fi
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
