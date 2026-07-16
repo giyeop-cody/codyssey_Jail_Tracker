@@ -520,29 +520,55 @@ app.post("/api/aggregate", async (req, res) => {
     // UI, Actions, 외부 호출 모두 항상 3·4·5·6 길드 멤버를 하나의 memberMap으로 합친다.
     const targetGuildIds = [...TRACKED_GUILD_IDS];
 
+    // 네 길드를 각각 조회한다. 일부 길드 실패를 숨긴 채 부분 데이터만 보여주지 않도록
+    // 네 요청이 모두 성공해야 다음 단계로 진행한다.
+    const guildResults = await Promise.all(targetGuildIds.map(async (gid) => {
+      const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
+      const response = await authFetch(url);
+      if (response && response.__unauthenticated) {
+        const err = new Error("세션 만료");
+        err.status = 401;
+        throw err;
+      }
+      if (!response || response.code !== 200 || !response.result) {
+        const message = response && response.message ? response.message : "invalid response";
+        throw new Error(`길드 조회 실패 (${gid}): ${message}`);
+      }
+      return response.result;
+    }));
+
+    // 각 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
+    // 같은 멤버가 여러 길드 응답에 있으면 한 번만 표시하고 소속 길드명만 합친다.
     const guilds = [];
     const memberMap = new Map();
-    for (const gid of targetGuildIds) {
-      try {
-        const g = await authFetch(`${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`);
-        if (g.__unauthenticated) return res.status(401).json({ error: "세션 만료", requireAuth: true });
-        if (g.code !== 200) continue;
-        guilds.push({
-          guildId: g.result.guildInfo.guildId,
-          guildName: g.result.guildInfo.guildNm,
-          currentRanking: g.result.guildInfo.currentRanking,
-          totalScore: g.result.guildInfo.totalScore,
-        });
-        for (const m of g.result.members || []) {
-          const ex = memberMap.get(m.mbrId);
-          if (ex) ex.guildNames.push(g.result.guildInfo.guildNm);
-          else memberMap.set(m.mbrId, {
-            mbrId: m.mbrId, name: m.mbrNm, level: m.level, email: m.emlAddr,
-            profileImage: m.profImgPath, personalScore: m.personalScore,
-            contributionRate: m.contributionRate, guildNames: [g.result.guildInfo.guildNm],
-          });
+    for (const result of guildResults) {
+      const info = result.guildInfo || {};
+      const guildName = info.guildNm || "이름 없는 길드";
+      guilds.push({
+        guildId: info.guildId,
+        guildName,
+        currentRanking: info.currentRanking,
+        totalScore: info.totalScore,
+      });
+
+      for (const member of result.members || []) {
+        if (member.mbrId == null) continue;
+        const existing = memberMap.get(member.mbrId);
+        if (existing) {
+          if (!existing.guildNames.includes(guildName)) existing.guildNames.push(guildName);
+          continue;
         }
-      } catch (e) { console.error(`Guild ${gid} err:`, e.message); }
+        memberMap.set(member.mbrId, {
+          mbrId: member.mbrId,
+          name: member.mbrNm,
+          level: member.level,
+          email: member.emlAddr,
+          profileImage: member.profImgPath,
+          personalScore: member.personalScore,
+          contributionRate: member.contributionRate,
+          guildNames: [guildName],
+        });
+      }
     }
 
     const members = [];
@@ -678,7 +704,8 @@ app.post("/api/aggregate", async (req, res) => {
     });
   } catch (err) {
     console.error("Aggregate error:", err);
-    res.status(500).json({ error: err.message });
+    const status = Number.isInteger(err.status) ? err.status : 500;
+    res.status(status).json({ error: err.message, requireAuth: status === 401 });
   }
 });
 
