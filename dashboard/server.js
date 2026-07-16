@@ -639,7 +639,22 @@ app.post("/api/aggregate", async (req, res) => {
           return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
         }
         const info = memberMap.get(mid);
-        if (!data.success) { members.push({ ...info, totalSeconds: 0, attendedDays: 0, days: [] }); continue; }
+        if (!data.success) {
+          // 조회 결과가 없거나 개별 조회가 실패해도 전체 멤버 랭킹에는 0시간으로 유지한다.
+          members.push({
+            ...info,
+            totalSeconds: 0,
+            totalRawSeconds: 0,
+            totalHours: 0,
+            totalDuration: "00:00:00",
+            attendedDays: 0,
+            avgPerDay: 0,
+            missingSessions: 0,
+            wasCapped: false,
+            days: [],
+          });
+          continue;
+        }
         const detail = data.detail_list || [];
         const maxH = data.max_recog_hours || 12;
         const days = [];

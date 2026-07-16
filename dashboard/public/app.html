@@ -653,11 +653,14 @@ function render() {
         </h3>
         <div class="insider-list">
           ${inside.length === 0 ? '<div style="color:var(--muted);font-size:14px">현재 출입 중인 멤버가 없습니다.</div>' :
-            inside.map(p => `
-              <div class="insider" onclick="showMemberDetail(p[MEMBER_KEY])">
-                ${avatarHtml(p)}
-                <span>${p.name}</span>
-              </div>`).join('')}
+            inside.map(p => {
+              const memberId = JSON.stringify(p[MEMBER_KEY]);
+              return `
+                <div class="insider" onclick='showMemberDetail(${memberId})'>
+                  ${avatarHtml(p)}
+                  <span>${p.name}</span>
+                </div>`;
+            }).join('')}
         </div>
       </div>
 
@@ -674,7 +677,7 @@ function render() {
       </div>
 
       <div class="card span-4">
-        <h3>🏆 이번달 랭킹 <span style="color:var(--muted);font-weight:400;font-size:12px">(인정시간)</span></h3>
+        <h3>🏆 이번달 전체 멤버 랭킹 <span style="color:var(--muted);font-weight:400;font-size:12px">(인정시간 · 기록 없음 0h)</span></h3>
         <div class="member-list" id="rankingList"></div>
       </div>
 
@@ -729,24 +732,35 @@ function renderCalendar() {
 }
 
 function renderRanking() {
-  const members = DATA.members.filter(m => m.totalSeconds > 0);
-  const maxSec = members.length ? members[0].totalSeconds : 1;
+  // 출입 기록이 없는 멤버도 0시간으로 포함한다.
+  // 동시간인 경우 이름, 그 다음 내부 식별자로 정렬하므로 동명이인도 각각 유지된다.
+  const members = DATA.members.slice().sort((a, b) =>
+    ((b.totalSeconds || 0) - (a.totalSeconds || 0)) ||
+    String(a.name || '').localeCompare(String(b.name || ''), 'ko') ||
+    String(a[MEMBER_KEY] || '').localeCompare(String(b[MEMBER_KEY] || ''))
+  );
+  const maxSec = Math.max(1, ...members.map(m => m.totalSeconds || 0));
   const list = document.getElementById('rankingList');
   list.innerHTML = members.map((m, i) => {
     const rc = i < 3 ? `r${i+1}` : '';
-    const pct = (m.totalSeconds / maxSec * 100).toFixed(1);
+    const totalSeconds = m.totalSeconds || 0;
+    const totalHours = m.totalHours ?? 0;
+    const attendedDays = m.attendedDays ?? 0;
+    const avgPerDay = m.avgPerDay ?? 0;
+    const pct = (totalSeconds / maxSec * 100).toFixed(1);
+    const memberId = JSON.stringify(m[MEMBER_KEY]);
     return `
-      <div class="member-row" onclick="showMemberDetail(m[MEMBER_KEY])">
+      <div class="member-row" onclick='showMemberDetail(${memberId})'>
         <div class="rank-badge ${rc}">${i+1}</div>
         ${avatarHtml(m)}
         <div class="member-info">
           <div class="member-name">${m.name} <span style="color:var(--muted);font-weight:400;font-size:12px">Lv.${m.level}</span></div>
-          <div class="member-meta">${m.attendedDays}일 · 일평균 ${m.avgPerDay}h${m.guildNames && m.guildNames.length ? ` · ${m.guildNames.join('/')}` : ''}</div>
+          <div class="member-meta">${attendedDays}일 · 일평균 ${avgPerDay}h${m.guildNames && m.guildNames.length ? ` · ${m.guildNames.join('/')}` : ''}</div>
           <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
         </div>
-        <div class="member-hours">${m.totalHours}h</div>
+        <div class="member-hours">${totalHours}h</div>
       </div>`;
-  }).join('') || '<div class="empty-state">이번 달 출입 기록이 없습니다.</div>';
+  }).join('') || '<div class="empty-state">등록된 길드 멤버가 없습니다.</div>';
 }
 
 function renderCharts() {
@@ -890,8 +904,9 @@ function showDayDetail(dateStr) {
             ${d.members.filter(m => m.seconds > 0).map((m, i) => {
               const full = DATA.members.find(x => x[MEMBER_KEY] === m[MEMBER_KEY]);
               const dayRec = full ? (full.days || []).find(x => x.date === dateStr) : null;
+              const memberId = JSON.stringify(m[MEMBER_KEY]);
               return `
-                <div class="member-row" onclick="showMemberDetail(m[MEMBER_KEY])">
+                <div class="member-row" onclick='showMemberDetail(${memberId})'>
                   <div class="rank-badge ${i<3?`r${i+1}`:''}">${i+1}</div>
                   ${full ? avatarHtml(full) : `<div class="avatar">${initials(m.name)}</div>`}
                   <div class="member-info">
