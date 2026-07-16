@@ -343,13 +343,16 @@
 <div id="mainUI" style="display:none">
 <header>
   <div>
-    <h1>🎯 SECOM 출입 대시보드</h1>
+    <h1>🔒 Jail Tracker · SECOM 통합 랭킹</h1>
     <div class="sub" id="metaInfo">데이터를 불러오는 중...</div>
   </div>
   <div class="controls">
     <div class="user-info" id="userInfo"></div>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer">
+      <input id="allGuilds" type="checkbox" checked onchange="document.getElementById('guildIds').disabled=this.checked"> 전체 길드
+    </label>
     <label style="font-size:12px;color:var(--muted)">길드ID</label>
-    <input id="guildIds" type="text" value="4" style="width:90px">
+    <input id="guildIds" type="text" value="" placeholder="예: 4,5,6" style="width:120px" disabled>
     <label style="font-size:12px;color:var(--muted)">연도</label>
     <input id="year" type="number" style="width:80px">
     <label style="font-size:12px;color:var(--muted)">월</label>
@@ -464,12 +467,16 @@ function avatarHtml(m) {
 }
 
 async function loadData() {
+  const allGuilds = document.getElementById('allGuilds').checked;
   const guildIds = document.getElementById('guildIds').value.split(',').map(s => parseInt(s.trim(),10)).filter(n=>n);
   const year = parseInt(document.getElementById('year').value, 10);
   const month = parseInt(document.getElementById('month').value, 10);
-  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>데이터를 불러오는 중...</div>';
+  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>길드 스캔 및 데이터 수집 중...<br><small style="color:var(--muted)">전체 길드 스캔 시 1~2분 소요될 수 있습니다</small></div>';
   try {
-    DATA = await fetchAggregate({ guildIds, year, month, seasonId: 5, weekNo: 9 });
+    const payload = { year, month, seasonId: 5, weekNo: 9 };
+    if (allGuilds) payload.allGuilds = true;
+    else payload.guildIds = guildIds;
+    DATA = await fetchAggregate(payload);
     currentYear = year; currentMonth = month;
     render();
   } catch (err) {
@@ -491,9 +498,12 @@ function render() {
   const totalMissing = activeMembers.reduce((s, m) => s + m.missingSessions, 0);
   const inside = DATA.currentlyInside || [];
   const guildNames = m.guilds.map(g => g.guildName).join(', ');
+  const scopeLabel = m.allGuilds
+    ? `전체 ${m.guilds.length}개 길드 통합 (${guildNames})`
+    : guildNames;
 
   document.getElementById('metaInfo').textContent =
-    `${guildNames} · ${m.year}년 ${m.month}월 · ${m.totalActiveMembers}/${m.totalMembers}명 활동 · ${new Date(m.collectedAt).toLocaleString('ko-KR')} 기준`;
+    `${scopeLabel} · ${m.year}년 ${m.month}월 · ${m.totalActiveMembers}/${m.totalMembers}명 활동 · ${new Date(m.collectedAt).toLocaleString('ko-KR')} 기준`;
 
   // GitHub 동기화 상태 배지
   const gh = (m.githubSync) || {};
@@ -650,7 +660,7 @@ function renderRanking() {
         ${avatarHtml(m)}
         <div class="member-info">
           <div class="member-name">${m.name} <span style="color:var(--muted);font-weight:400;font-size:12px">Lv.${m.level}</span></div>
-          <div class="member-meta">${m.attendedDays}일 · 일평균 ${m.avgPerDay}h</div>
+          <div class="member-meta">${m.attendedDays}일 · 일평균 ${m.avgPerDay}h${m.guildNames && m.guildNames.length ? ` · ${m.guildNames.join('/')}` : ''}</div>
           <div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div>
         </div>
         <div class="member-hours">${m.totalHours}h</div>
