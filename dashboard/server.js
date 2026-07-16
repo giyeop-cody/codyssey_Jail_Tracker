@@ -27,13 +27,21 @@ const CACHE_TTL_MS = 2 * 60 * 1000;
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
 
 // GitHub Secret 자동 동기화 설정
-// Codespaces Secret GH_PAT_SYNC를 우선 사용한다. GITHUB_REPOSITORY는 Codespaces가 자동 제공한다.
-// 로컬에서는 기존처럼 GITHUB_TOKEN / GITHUB_REPOSITORY를 직접 지정할 수 있다.
-const GITHUB_TOKEN = process.env.GH_PAT_SYNC || process.env.GITHUB_TOKEN || "";
+// Codespaces에서는 반드시 사용자가 등록한 GH_PAT_SYNC를 사용한다.
+// 기본 GITHUB_TOKEN으로 조용히 대체하면 권한 부족을 Secret 설정 오류로 오인하기 쉽기 때문이다.
+// 로컬 실행에서만 GITHUB_TOKEN을 대체 수단으로 허용한다.
+const IS_CODESPACES = process.env.CODESPACES === "true";
+const GITHUB_TOKEN_SOURCE = process.env.GH_PAT_SYNC
+  ? "GH_PAT_SYNC"
+  : (!IS_CODESPACES && process.env.GITHUB_TOKEN ? "GITHUB_TOKEN" : "none");
+const GITHUB_TOKEN = GITHUB_TOKEN_SOURCE === "GH_PAT_SYNC"
+  ? process.env.GH_PAT_SYNC
+  : (GITHUB_TOKEN_SOURCE === "GITHUB_TOKEN" ? process.env.GITHUB_TOKEN : "");
 const GITHUB_REPOSITORY = process.env.GITHUB_REPOSITORY || "";
 let githubSyncStatus = {
   enabled: false,
   configured: false,
+  tokenSource: GITHUB_TOKEN_SOURCE,
   lastSync: null,
   lastWorkflowDispatch: null,
   workflowTriggered: false,
@@ -255,6 +263,17 @@ async function doLoginWithCredentials(userId, password) {
   return false;
 }
 
+async function githubApiError(res) {
+  const text = await res.text().catch(() => "");
+  if (!text) return `HTTP ${res.status}`;
+  try {
+    const data = JSON.parse(text);
+    return `${res.status} ${data.message || text}`;
+  } catch (e) {
+    return `${res.status} ${text}`;
+  }
+}
+
 /**
  * GitHub Actions 시크릿 CODYSSEY_SESSION 에 현재 JSESSIONID를 자동 업로드.
  * - libsodium으로 SealedBox 암호화 필요
@@ -273,7 +292,9 @@ async function syncSessionToGitHub() {
   if (!token || !repo) {
     githubSyncStatus.configured = false;
     githubSyncStatus.enabled = false;
-    githubSyncStatus.lastError = "GH_PAT_SYNC 또는 GITHUB_REPOSITORY가 설정되지 않았습니다";
+    githubSyncStatus.lastError = !token && IS_CODESPACES
+      ? "Codespaces Secret GH_PAT_SYNC가 현재 컨테이너에 주입되지 않았습니다. Codespace를 Stop 후 Start하거나 컨테이너를 Rebuild하세요."
+      : "GH_PAT_SYNC/GITHUB_TOKEN 또는 GITHUB_REPOSITORY가 설정되지 않았습니다.";
     return false;
   }
   githubSyncStatus.configured = true;
@@ -293,7 +314,7 @@ async function syncSessionToGitHub() {
     // 1. Repository Actions Secret 공개키 조회
     const keyRes = await fetch(secretApi + "/public-key", { headers });
     if (!keyRes.ok) {
-      throw new Error(`Failed to fetch public key: ${keyRes.status}`);
+      throw new Error(`Repository Secrets 공개키 조회 실패: ${await githubApiError(keyRes)}`);
     }
     const keyData = await keyRes.json();
 
@@ -314,8 +335,7 @@ async function syncSessionToGitHub() {
       }),
     });
     if (!putRes.ok && putRes.status !== 201 && putRes.status !== 204) {
-      const errTxt = await putRes.text();
-      throw new Error(`Failed to set secret: ${putRes.status} ${errTxt}`);
+      throw new Error(`CODYSSEY_SESSION 저장 실패: ${await githubApiError(putRes)}`);
     }
     secretUploaded = true;
     githubSyncStatus.lastSync = new Date().toISOString();
@@ -328,8 +348,7 @@ async function syncSessionToGitHub() {
       body: JSON.stringify({ ref: "main" }),
     });
     if (dispatchRes.status !== 204) {
-      const errTxt = await dispatchRes.text();
-      throw new Error(`Collect workflow dispatch failed: ${dispatchRes.status} ${errTxt}`);
+      throw new Error(`Collect workflow 실행 요청 실패: ${await githubApiError(dispatchRes)}. PAT의 Actions: Read and write 권한을 확인하세요.`);
     }
 
     githubSyncStatus.lastWorkflowDispatch = new Date().toISOString();
@@ -427,6 +446,7 @@ app.get("/api/session", async (req, res) => {
     githubSync: {
       enabled: githubSyncStatus.enabled,
       configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
+      tokenSource: githubSyncStatus.tokenSource,
       lastSync: githubSyncStatus.lastSync,
       lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
       workflowTriggered: githubSyncStatus.workflowTriggered,
@@ -438,11 +458,9 @@ app.get("/api/session", async (req, res) => {
 
 app.post("/api/sync-github", async (req, res) => {
   if (!session.cookies["JSESSIONID"]) return res.status(400).json({ success: false, error: "먼저 로그인해주세요." });
-  if (!GITHUB_TOKEN || !GITHUB_REPOSITORY) {
-    return res.status(400).json({ success: false, error: "Codespaces Secret GH_PAT_SYNC 또는 GITHUB_REPOSITORY가 설정되지 않았습니다." });
-  }
   const ok = await syncSessionToGitHub();
-  res.json({ success: ok, ...githubSyncStatus });
+  const error = ok ? null : githubSyncStatus.lastError;
+  res.status(ok ? 200 : 502).json({ success: ok, error, ...githubSyncStatus });
 });
 
 app.post("/api/login", async (req, res) => {
@@ -750,6 +768,7 @@ app.post("/api/aggregate", async (req, res) => {
         githubSync: {
           enabled: githubSyncStatus.enabled,
           configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
+          tokenSource: githubSyncStatus.tokenSource,
           lastSync: githubSyncStatus.lastSync,
           lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
           workflowTriggered: githubSyncStatus.workflowTriggered,

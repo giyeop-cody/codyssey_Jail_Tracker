@@ -77,6 +77,8 @@ echo "$GITHUB_REPOSITORY"
 # 예상: giyeop-cody/codyssey_Jail_Tracker
 ```
 
+`GH_PAT_SYNC=missing`이면 Secret 등록 후 Codespace를 Stop/Start하거나 컨테이너를 Rebuild합니다. 동기화는 되지만 Action 실행이 403으로 실패하면 PAT의 **Repository permissions → Actions → Read and write**를 확인합니다.
+
 최신 코드로 서버를 다시 실행하려면:
 
 ```bash

@@ -40,9 +40,18 @@ test("로그인 시 JSESSIONID 저장 후 수집 workflow를 즉시 실행한다
   const loginRoute = sourceBetween(serverSource, 'app.post("/api/login"', 'app.post("/api/logout"');
   assert.match(loginRoute, /const githubSynced = await syncSessionToGitHub\(\)/);
   assert.match(loginRoute, /githubSyncError/);
-  assert.match(serverSource, /process\.env\.GH_PAT_SYNC \|\| process\.env\.GITHUB_TOKEN/);
+  assert.match(serverSource, /const IS_CODESPACES = process\.env\.CODESPACES === "true"/);
+  assert.match(serverSource, /GITHUB_TOKEN_SOURCE/);
   assert.match(serverSource, /actions\/workflows\/collect\.yml\/dispatches/);
   assert.match(serverSource, /workflowTriggered = true/);
+});
+
+test("동기화 실패 시 서버의 실제 GitHub API 오류를 표시한다", () => {
+  const syncUi = sourceBetween(appHtml, "async function syncToGithub", "async function fetchAggregate");
+  const syncRoute = sourceBetween(serverSource, 'app.post("/api/sync-github"', 'app.post("/api/login"');
+  assert.match(syncUi, /data\.error \|\| data\.lastError/);
+  assert.match(syncUi, /data\.tokenSource/);
+  assert.match(syncRoute, /error, \.\.\.githubSyncStatus/);
 });
 
 test("정적 Pages에 세션이 없으면 Codespace 로그인 버튼을 표시한다", () => {
