@@ -1,0 +1,6 @@
+node_modules/
+dashboard/node_modules/
+dashboard/.session-cookies.json
+dashboard/artifacts/
+*.log
+.npm/

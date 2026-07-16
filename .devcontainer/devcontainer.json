@@ -1,0 +1,33 @@
+{
+  "name": "SECOM Dashboard",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:20",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "Dashboard",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "postCreateCommand": "cd dashboard && npm install",
+  // Codespaces는 GITHUB_TOKEN / GITHUB_REPOSITORY 를 자동 주입하지만,
+  // Secret 수정 권한을 가진 PAT는 사용자가 Codespaces Secret GITHUB_TOKEN_SYNC 로 제공해야 함.
+  // 아래에서 GITHUB_TOKEN_SYNC → GITHUB_TOKEN 환경변수로 매핑해 서버가 사용.
+  "postStartCommand": "cd dashboard && GITHUB_TOKEN=\"${localEnv:GITHUB_TOKEN_SYNC:}\" npm start",
+  "waitFor": "postCreateCommand",
+  "customizations": {
+    "vscode": {
+      "extensions": [],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    },
+    "codespaces": {
+      "openFiles": ["README.md"],
+      "secrets": {
+        "GITHUB_TOKEN_SYNC": {
+          "description": "GitHub Personal Access Token (classic, repo 스코프). 로그인 시 세션을 CODYSSEY_SESSION 시크릿에 자동 업로드"
+        }
+      }
+    }
+  }
+}
