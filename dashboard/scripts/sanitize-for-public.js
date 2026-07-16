@@ -63,7 +63,10 @@ if (data.meta) {
   // 정적 프런트에는 내부 길드 ID나 조회 범위를 노출하지 않고 길드명만 제공한다.
   delete data.meta.guildIds;
   delete data.meta.guildScope;
-  if (Array.isArray(data.meta.guilds)) {
+  if (data.placeholder) {
+    // 첫 수집 전에는 임시 길드명(예: "길드 3")도 공개 화면에 표시하지 않는다.
+    data.meta.guilds = [];
+  } else if (Array.isArray(data.meta.guilds)) {
     data.meta.guilds = data.meta.guilds.map(g => {
       const out = { ...g };
       delete out.guildId;
