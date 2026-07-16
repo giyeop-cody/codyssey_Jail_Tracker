@@ -13,6 +13,7 @@ const fetch = require("node-fetch");
 const setCookie = require("set-cookie-parser");
 const sodium = require("libsodium-wrappers");
 const path = require("path");
+const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
 
 const fs = require("fs");
 
@@ -23,9 +24,7 @@ const API_BASE = "https://api.usr.codyssey.kr";
 const AUTH_URL = "https://api.ams.codyssey.kr/authenticate";
 const MAIN_ORIGIN = "https://usr.codyssey.kr";
 const CACHE_TTL_MS = 2 * 60 * 1000;
-// Jail Tracker는 길드 선택 없이 3·4·5·6 길드 전체를 항상 통합 조회한다.
-// 클라이언트나 Actions가 다른 guildIds를 보내더라도 이 범위를 변경하지 않는다.
-const TRACKED_GUILD_IDS = Object.freeze([3, 4, 5, 6]);
+// TRACKED_GUILD_IDS는 클라이언트 입력으로 변경할 수 없는 서버 고정 범위다.
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
 
 // GitHub Secret 자동 동기화 설정
@@ -537,39 +536,8 @@ app.post("/api/aggregate", async (req, res) => {
       return response.result;
     }));
 
-    // 각 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
-    // 같은 멤버가 여러 길드 응답에 있으면 한 번만 표시하고 소속 길드명만 합친다.
-    const guilds = [];
-    const memberMap = new Map();
-    for (const result of guildResults) {
-      const info = result.guildInfo || {};
-      const guildName = info.guildNm || "이름 없는 길드";
-      guilds.push({
-        guildId: info.guildId,
-        guildName,
-        currentRanking: info.currentRanking,
-        totalScore: info.totalScore,
-      });
-
-      for (const member of result.members || []) {
-        if (member.mbrId == null) continue;
-        const existing = memberMap.get(member.mbrId);
-        if (existing) {
-          if (!existing.guildNames.includes(guildName)) existing.guildNames.push(guildName);
-          continue;
-        }
-        memberMap.set(member.mbrId, {
-          mbrId: member.mbrId,
-          name: member.mbrNm,
-          level: member.level,
-          email: member.emlAddr,
-          profileImage: member.profImgPath,
-          personalScore: member.personalScore,
-          contributionRate: member.contributionRate,
-          guildNames: [guildName],
-        });
-      }
-    }
+    // 네 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
+    const { guilds, memberMap } = mergeTrackedGuilds(guildResults);
 
     const members = [];
     const dailyMap = new Map();
