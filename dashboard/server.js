@@ -434,6 +434,50 @@ app.get("/api/session/debug", (req, res) => {
 // 미들웨어: 모든 API 요청 전에 자동 로그인 시도
 app.use("/api/guild", async (req, res, next) => { await tryAutoLoginFromEnv(); next(); });
 app.use("/api/secom", async (req, res, next) => { await tryAutoLoginFromEnv(); next(); });
+app.use("/api/guilds", async (req, res, next) => { await tryAutoLoginFromEnv(); next(); });
+app.use("/api/aggregate", async (req, res, next) => { await tryAutoLoginFromEnv(); next(); });
+
+// 길드 목록 캐시 (TTL 10분)
+let guildListCache = { guilds: null, fetchedAt: 0 };
+const GUILD_LIST_TTL = 10 * 60 * 1000;
+
+async function discoverGuilds(seasonId, weekNo, maxId = 50) {
+  const now = Date.now();
+  if (guildListCache.guilds && (now - guildListCache.fetchedAt) < GUILD_LIST_TTL) {
+    return guildListCache.guilds;
+  }
+  const found = [];
+  const BATCH = 5;
+  for (let i = 1; i <= maxId; i += BATCH) {
+    const batch = [];
+    for (let j = i; j < Math.min(i + BATCH, maxId + 1); j++) batch.push(j);
+    const results = await Promise.all(batch.map(async gid => {
+      try {
+        const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
+        const g = await authFetch(url);
+        if (g && g.code === 200 && g.result && g.result.guildInfo) {
+          return { guildId: gid, guildName: g.result.guildInfo.guildNm, currentRanking: g.result.guildInfo.currentRanking, totalScore: g.result.guildInfo.totalScore, memberCount: (g.result.members || []).length };
+        }
+      } catch (e) {}
+      return null;
+    }));
+    for (const r of results) if (r) found.push(r);
+  }
+  found.sort((a,b) => (a.currentRanking||999) - (b.currentRanking||999));
+  guildListCache = { guilds: found, fetchedAt: now };
+  return found;
+}
+
+app.get("/api/guilds", async (req, res) => {
+  try {
+    if (!session.cookies["JSESSIONID"]) return res.status(401).json({ error: "로그인 필요", requireAuth: true });
+    const seasonId = parseInt(req.query.seasonId || "5", 10);
+    const weekNo = parseInt(req.query.weekNo || "9", 10);
+    const maxId = parseInt(req.query.maxId || "50", 10);
+    const guilds = await discoverGuilds(seasonId, weekNo, maxId);
+    res.json({ success: true, count: guilds.length, guilds });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.get("/api/guild/:guildId", async (req, res) => {
   try {
@@ -466,13 +510,19 @@ app.post("/api/aggregate", async (req, res) => {
     if (!session.cookies["JSESSIONID"]) {
       return res.status(401).json({ error: "로그인이 필요합니다", requireAuth: true });
     }
-    const { guildIds, seasonId = 5, weekNo = 9,
+    const { guildIds, allGuilds = false, seasonId = 5, weekNo = 9,
             year = new Date().getFullYear(), month = new Date().getMonth() + 1 } = req.body || {};
-    if (!Array.isArray(guildIds) || !guildIds.length) return res.status(400).json({ error: "guildIds required" });
+
+    let targetGuildIds = guildIds;
+    if (allGuilds) {
+      const discovered = await discoverGuilds(seasonId, weekNo, 50);
+      targetGuildIds = discovered.map(g => g.guildId);
+    }
+    if (!Array.isArray(targetGuildIds) || !targetGuildIds.length) return res.status(400).json({ error: "guildIds required" });
 
     const guilds = [];
     const memberMap = new Map();
-    for (const gid of guildIds) {
+    for (const gid of targetGuildIds) {
       try {
         const g = await authFetch(`${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`);
         if (g.__unauthenticated) return res.status(401).json({ error: "세션 만료", requireAuth: true });
@@ -604,7 +654,7 @@ app.post("/api/aggregate", async (req, res) => {
 
     res.json({
       meta: {
-        year, month, guildIds, guilds,
+        year, month, guildIds: targetGuildIds, allGuilds, guilds,
         totalMembers: members.length,
         totalActiveMembers: members.filter(m=>m.totalSeconds>0).length,
         collectedAt: new Date().toISOString(), todayStr,
