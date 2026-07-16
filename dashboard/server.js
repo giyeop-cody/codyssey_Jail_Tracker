@@ -510,15 +510,12 @@ app.post("/api/aggregate", async (req, res) => {
     if (!session.cookies["JSESSIONID"]) {
       return res.status(401).json({ error: "로그인이 필요합니다", requireAuth: true });
     }
-    const { guildIds, allGuilds = false, seasonId = 5, weekNo = 9,
+    const { guildIds, seasonId = 5, weekNo = 9,
             year = new Date().getFullYear(), month = new Date().getMonth() + 1 } = req.body || {};
 
-    let targetGuildIds = guildIds;
-    if (allGuilds) {
-      const discovered = await discoverGuilds(seasonId, weekNo, 50);
-      targetGuildIds = discovered.map(g => g.guildId);
-    }
-    if (!Array.isArray(targetGuildIds) || !targetGuildIds.length) return res.status(400).json({ error: "guildIds required" });
+    // 기본 길드 목록 (고정)
+    const DEFAULT_GUILDS = [3,4,5,6];
+    let targetGuildIds = Array.isArray(guildIds) && guildIds.length ? guildIds : DEFAULT_GUILDS;
 
     const guilds = [];
     const memberMap = new Map();

@@ -348,11 +348,6 @@
   </div>
   <div class="controls">
     <div class="user-info" id="userInfo"></div>
-    <label style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);cursor:pointer">
-      <input id="allGuilds" type="checkbox" checked onchange="document.getElementById('guildIds').disabled=this.checked"> 전체 길드
-    </label>
-    <label style="font-size:12px;color:var(--muted)">길드ID</label>
-    <input id="guildIds" type="text" value="" placeholder="예: 4,5,6" style="width:120px" disabled>
     <label style="font-size:12px;color:var(--muted)">연도</label>
     <input id="year" type="number" style="width:80px">
     <label style="font-size:12px;color:var(--muted)">월</label>
@@ -375,6 +370,8 @@ let DATA = null;
 let CHARTS = {};
 let currentMonth = new Date().getMonth() + 1;
 let currentYear = new Date().getFullYear();
+let PUBLIC_MODE = false;       // GitHub Pages 정적 뷰
+let MEMBER_KEY = 'mbrId';      // 라이브는 'mbrId', 공개는 '_publicId'
 
 async function apiFetch(url, opts) {
   const res = await fetch(url, opts);
@@ -382,8 +379,24 @@ async function apiFetch(url, opts) {
 }
 
 async function checkSession() {
-  const res = await fetch('/api/session');
-  return res.json();
+  try {
+    const res = await fetch('/api/session', { cache: 'no-store' });
+    if (!res.ok) throw new Error('no backend');
+    return await res.json();
+  } catch (e) {
+    return { __static: true };
+  }
+}
+
+async function loadPublicData() {
+  // 정적 모드: data.json 을 불러와 바로 렌더
+  const res = await fetch('data.json', { cache: 'no-store' });
+  if (!res.ok) throw new Error('공개 데이터가 아직 없습니다 (첫 수집 대기 중)');
+  const data = await res.json();
+  if (!data.members || data.members.length === 0) {
+    throw new Error('아직 수집된 데이터가 없습니다. 첫 GitHub Actions 수집이 완료되면 표시됩니다.');
+  }
+  return data;
 }
 
 async function doLogin() {
@@ -467,15 +480,26 @@ function avatarHtml(m) {
 }
 
 async function loadData() {
-  const allGuilds = document.getElementById('allGuilds').checked;
-  const guildIds = document.getElementById('guildIds').value.split(',').map(s => parseInt(s.trim(),10)).filter(n=>n);
+  if (PUBLIC_MODE) {
+    // 정적 모드: 이미 boot 시점에 불러온 DATA 를 그대로 다시 렌더 (새로고침은 data.json 재요청)
+    document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>데이터를 불러오는 중...</div>';
+    try {
+      DATA = await loadPublicData();
+      currentYear = DATA.meta.year;
+      currentMonth = DATA.meta.month;
+      render();
+    } catch (err) {
+      document.getElementById('app').innerHTML =
+        `<div class="empty-state">❌ 불러오기 실패: ${err.message}</div>`;
+    }
+    return;
+  }
+
   const year = parseInt(document.getElementById('year').value, 10);
   const month = parseInt(document.getElementById('month').value, 10);
-  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>길드 스캔 및 데이터 수집 중...<br><small style="color:var(--muted)">전체 길드 스캔 시 1~2분 소요될 수 있습니다</small></div>';
+  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>데이터를 불러오는 중...</div>';
   try {
     const payload = { year, month, seasonId: 5, weekNo: 9 };
-    if (allGuilds) payload.allGuilds = true;
-    else payload.guildIds = guildIds;
     DATA = await fetchAggregate(payload);
     currentYear = year; currentMonth = month;
     render();
@@ -498,40 +522,44 @@ function render() {
   const totalMissing = activeMembers.reduce((s, m) => s + m.missingSessions, 0);
   const inside = DATA.currentlyInside || [];
   const guildNames = m.guilds.map(g => g.guildName).join(', ');
-  const scopeLabel = m.allGuilds
-    ? `전체 ${m.guilds.length}개 길드 통합 (${guildNames})`
-    : guildNames;
+  const scopeLabel = `3·4·5·6길드 통합 (${guildNames})`;
 
+  const collectedAt = m.collectedAt || DATA.publishedAt;
+  const collectedLabel = PUBLIC_MODE
+    ? ` · 최종 갱신 ${new Date(collectedAt).toLocaleString('ko-KR')} (매시 자동)`
+    : ` · ${new Date(collectedAt).toLocaleString('ko-KR')} 기준`;
   document.getElementById('metaInfo').textContent =
-    `${scopeLabel} · ${m.year}년 ${m.month}월 · ${m.totalActiveMembers}/${m.totalMembers}명 활동 · ${new Date(m.collectedAt).toLocaleString('ko-KR')} 기준`;
+    `${scopeLabel} · ${m.year}년 ${m.month}월 · ${m.totalActiveMembers}/${m.totalMembers}명 활동${collectedLabel}`;
 
-  // GitHub 동기화 상태 배지
-  const gh = (m.githubSync) || {};
-  let ghBadge = '';
-  if (gh.configured) {
-    const lastSyncStr = gh.lastSync ? new Date(gh.lastSync).toLocaleString('ko-KR', {hour12:false}) : '없음';
-    if (gh.enabled) {
-      ghBadge = `<span class="gh-status ok" title="세션이 GitHub Secret에 동기화됨 (${gh.repository})">
-        <span class="live-dot"></span> GitHub 연동됨 · ${lastSyncStr.slice(5)}
-        <button class="gh-sync-btn" onclick="syncToGithub()">지금 동기화</button>
-      </span>`;
+  if (!PUBLIC_MODE) {
+    // 라이브 모드에서만 GitHub 동기화 배지 + 로그인 사용자 정보 표시
+    const gh = (m.githubSync) || {};
+    let ghBadge = '';
+    if (gh.configured) {
+      const lastSyncStr = gh.lastSync ? new Date(gh.lastSync).toLocaleString('ko-KR', {hour12:false}) : '없음';
+      if (gh.enabled) {
+        ghBadge = `<span class="gh-status ok" title="세션이 GitHub Secret에 동기화됨 (${gh.repository})">
+          <span class="live-dot"></span> GitHub 연동됨 · ${lastSyncStr.slice(5)}
+          <button class="gh-sync-btn" onclick="syncToGithub()">지금 동기화</button>
+        </span>`;
+      } else {
+        ghBadge = `<span class="gh-status err" title="${gh.lastError||'동기화 실패'}">
+          ⚠ GitHub 동기화 오류
+          <button class="gh-sync-btn" onclick="syncToGithub()">재시도</button>
+        </span>`;
+      }
     } else {
-      ghBadge = `<span class="gh-status err" title="${gh.lastError||'동기화 실패'}">
-        ⚠ GitHub 동기화 오류
-        <button class="gh-sync-btn" onclick="syncToGithub()">재시도</button>
+      ghBadge = `<span class="gh-status off" title="GITHUB_TOKEN을 설정하면 로그인 시 자동으로 GitHub Actions Secret에 세션이 동기화됩니다">
+        🔗 GitHub 자동동기화 꺼짐
       </span>`;
     }
-  } else {
-    ghBadge = `<span class="gh-status off" title="GITHUB_TOKEN을 설정하면 로그인 시 자동으로 GitHub Actions Secret에 세션이 동기화됩니다">
-      🔗 GitHub 자동동기화 꺼짐
-    </span>`;
-  }
 
-  document.getElementById('userInfo').innerHTML = `
-    ${ghBadge}
-    <div class="avatar">${(m.loggedInAs||'?').charAt(0)}</div>
-    <span>${m.loggedInAs || ''}</span>
-    <button class="logout-btn" onclick="doLogout()" title="로그아웃">✕</button>`;
+    document.getElementById('userInfo').innerHTML = `
+      ${ghBadge}
+      <div class="avatar">${(m.loggedInAs||'?').charAt(0)}</div>
+      <span>${m.loggedInAs || ''}</span>
+      <button class="logout-btn" onclick="doLogout()" title="로그아웃">✕</button>`;
+  }
 
   const app = document.getElementById('app');
   app.innerHTML = `
@@ -567,13 +595,13 @@ function render() {
 
       <div class="card span-12">
         <h3>
-          <span class="live-badge"><span class="live-dot"></span>현재 출입 중</span>
+          <span class="live-badge">${PUBLIC_MODE ? '📌' : '<span class="live-dot"></span>'}${PUBLIC_MODE ? '최종 수집 시점 출입자' : '현재 출입 중'}</span>
           <span style="float:right;color:var(--muted);font-weight:400;font-size:13px">총 ${inside.length}명</span>
         </h3>
         <div class="insider-list">
           ${inside.length === 0 ? '<div style="color:var(--muted);font-size:14px">현재 출입 중인 멤버가 없습니다.</div>' :
             inside.map(p => `
-              <div class="insider" onclick="showMemberDetail('${p.mbrId}')">
+              <div class="insider" onclick="showMemberDetail(p[MEMBER_KEY])">
                 ${avatarHtml(p)}
                 <span>${p.name}</span>
               </div>`).join('')}
@@ -583,7 +611,7 @@ function render() {
       <div class="card span-8">
         <div class="cal-head">
           <div class="cal-title" id="calTitle"></div>
-          <div class="cal-nav">
+          <div class="cal-nav" ${PUBLIC_MODE ? 'style="display:none"' : ''}>
             <button onclick="changeMonth(-1)">‹</button>
             <button onclick="goThisMonth()">오늘</button>
             <button onclick="changeMonth(1)">›</button>
@@ -655,7 +683,7 @@ function renderRanking() {
     const rc = i < 3 ? `r${i+1}` : '';
     const pct = (m.totalSeconds / maxSec * 100).toFixed(1);
     return `
-      <div class="member-row" onclick="showMemberDetail('${m.mbrId}')">
+      <div class="member-row" onclick="showMemberDetail(m[MEMBER_KEY])">
         <div class="rank-badge ${rc}">${i+1}</div>
         ${avatarHtml(m)}
         <div class="member-info">
@@ -736,7 +764,7 @@ function goThisMonth() {
 }
 
 function showMemberDetail(mbrId) {
-  const m = DATA.members.find(x => x.mbrId === mbrId);
+  const m = DATA.members.find(x => x[MEMBER_KEY] === mbrId);
   if (!m) return;
   closeModals();
   const days = m.days || [];
@@ -807,10 +835,10 @@ function showDayDetail(dateStr) {
           </div>
           <div class="member-list" style="max-height:400px">
             ${d.members.filter(m => m.seconds > 0).map((m, i) => {
-              const full = DATA.members.find(x => x.mbrId === m.mbrId);
+              const full = DATA.members.find(x => x[MEMBER_KEY] === m[MEMBER_KEY]);
               const dayRec = full ? (full.days || []).find(x => x.date === dateStr) : null;
               return `
-                <div class="member-row" onclick="showMemberDetail('${m.mbrId}')">
+                <div class="member-row" onclick="showMemberDetail(m[MEMBER_KEY])">
                   <div class="rank-badge ${i<3?`r${i+1}`:''}">${i+1}</div>
                   ${full ? avatarHtml(full) : `<div class="avatar">${initials(m.name)}</div>`}
                   <div class="member-info">
@@ -842,6 +870,42 @@ document.getElementById('loginId').addEventListener('keydown', e => { if (e.key 
 
 async function boot() {
   const sess = await checkSession();
+
+  if (sess.__static) {
+    // 정적 모드 (GitHub Pages 등 백엔드 없이 호스팅된 경우)
+    PUBLIC_MODE = true;
+    MEMBER_KEY = '_publicId';
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('mainUI').style.display = 'block';
+
+    // 공개 뷰 배지 삽입
+    const userInfo = document.getElementById('userInfo');
+    userInfo.innerHTML = `<span class="gh-status ok" title="GitHub Pages에서 제공되는 읽기 전용 공개 뷰입니다. 매시간 자동 갱신">
+      🌐 공개 뷰 (읽기 전용)
+      <a class="gh-sync-btn" href="https://github.com/codespaces/new/giyeop-cody/codyssey_Jail_Tracker?devcontainer_path=.devcontainer%2Fdevcontainer.json" target="_blank" style="text-decoration:none;color:inherit">🚀 Codespaces로 라이브 보기</a>
+    </span>`;
+
+    // 공개 뷰에서는 연/월 고정 (이번 달 데이터만 제공)
+    ['year','month'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = true;
+    });
+
+    document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>공개 데이터 로딩 중...</div>';
+    try {
+      DATA = await loadPublicData();
+      currentYear = DATA.meta.year; currentMonth = DATA.meta.month;
+      document.getElementById('year').value = currentYear;
+      document.getElementById('month').value = currentMonth;
+      render();
+      setInterval(() => { if (DATA) loadData(); }, 5*60*1000);
+    } catch (err) {
+      document.getElementById('app').innerHTML =
+        `<div class="empty-state">❌ ${err.message}</div>`;
+    }
+    return;
+  }
+
   if (sess.loggedIn) {
     document.getElementById('loginScreen').style.display = 'none';
     document.getElementById('mainUI').style.display = 'block';
