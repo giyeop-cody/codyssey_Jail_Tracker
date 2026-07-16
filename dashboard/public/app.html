@@ -372,6 +372,7 @@ let currentMonth = new Date().getMonth() + 1;
 let currentYear = new Date().getFullYear();
 let PUBLIC_MODE = false;       // GitHub Pages 정적 뷰
 let MEMBER_KEY = 'mbrId';      // 라이브는 'mbrId', 공개는 '_publicId'
+const TRACKED_GUILD_IDS = Object.freeze([3, 4, 5, 6]);
 
 async function apiFetch(url, opts) {
   const res = await fetch(url, opts);
@@ -497,9 +498,10 @@ async function loadData() {
 
   const year = parseInt(document.getElementById('year').value, 10);
   const month = parseInt(document.getElementById('month').value, 10);
-  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>데이터를 불러오는 중...</div>';
+  document.getElementById('app').innerHTML = '<div class="loading"><div class="spinner"></div><br>3·4·5·6길드 멤버를 통합 조회하는 중...</div>';
   try {
-    const payload = { year, month, seasonId: 5, weekNo: 9 };
+    // 서버도 이 범위를 강제하지만, 요청 의도를 명시해 구버전 서버와도 호환한다.
+    const payload = { guildIds: TRACKED_GUILD_IDS, year, month, seasonId: 5, weekNo: 9 };
     DATA = await fetchAggregate(payload);
     currentYear = year; currentMonth = month;
     render();
@@ -521,8 +523,9 @@ function render() {
   const totalSec = activeMembers.reduce((s, m) => s + m.totalSeconds, 0);
   const totalMissing = activeMembers.reduce((s, m) => s + m.missingSessions, 0);
   const inside = DATA.currentlyInside || [];
-  const guildNames = m.guilds.map(g => g.guildName).join(', ');
-  const scopeLabel = `3·4·5·6길드 통합 (${guildNames})`;
+  const loadedGuilds = Array.isArray(m.guilds) ? m.guilds : [];
+  const guildNames = loadedGuilds.map(g => `#${g.guildId} ${g.guildName}`).join(', ');
+  const scopeLabel = `3·4·5·6길드 통합${guildNames ? ` (${guildNames})` : ''}`;
 
   const collectedAt = m.collectedAt || DATA.publishedAt;
   const collectedLabel = PUBLIC_MODE

@@ -22,7 +22,7 @@
 #   - GITHUB_TOKEN_SYNC : (필수?) Secret 쓸 권한 있는 PAT. 대시보드에서 자동으로
 #                         세션을 Secret에 올려주려면 필요.
 #                         없으면 수동으로 JSESSIONID 입력으로 갱신 가능.
-#   - CODYSSEY_GUILDS   : (옵션) 길드 ID 콤마 구분. 미설정 시 기본값 3,4,5,6 사용
+#   - 조회 대상 길드는 3,4,5,6으로 고정되며 별도 길드 Secret/입력을 사용하지 않음
 
 name: Collect SECOM Data
 
@@ -34,11 +34,6 @@ on:
       jsessionid:
         description: '새 JSESSIONID (대시보드에서 로그인하면 자동 갱신되므로 평소 비워두세요)'
         required: false
-        type: string
-      guilds:
-        description: '길드 ID (비워두면 기본값 3,4,5,6 사용)'
-        required: false
-        default: ''
         type: string
 
 jobs:
@@ -105,22 +100,10 @@ jobs:
           "
           echo "→ 수동 입력 JSESSIONID로 세션 덮어쓰기 완료"
 
-      - name: Determine guild IDs
-        id: guilds
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.guilds }}" ]; then
-            echo "guilds=${{ inputs.guilds }}" >> $GITHUB_OUTPUT
-          elif [ -n "${{ secrets.CODYSSEY_GUILDS }}" ]; then
-            echo "guilds=${{ secrets.CODYSSEY_GUILDS }}" >> $GITHUB_OUTPUT
-          else
-            echo "guilds=3,4,5,6" >> $GITHUB_OUTPUT
-          fi
-
       - name: Start server & collect
         working-directory: dashboard
         env:
           PORT: 3000
-          GUILDS: ${{ steps.guilds.outputs.guilds }}
         run: |
           mkdir -p artifacts
           node server.js > /tmp/server.log 2>&1 &
@@ -141,12 +124,11 @@ jobs:
 
           NOW_YEAR=$(date -u +%Y)
           NOW_MONTH=$(date -u +%m)
-          GUILDS_JSON=$(node -pe "JSON.stringify(process.env.GUILDS.split(',').map(s=>parseInt(s.trim(),10)).filter(n=>n))")
-          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=$GUILDS_JSON"
+          echo "요청: year=$NOW_YEAR month=$((10#$NOW_MONTH)) guilds=[3,4,5,6] (고정 통합)"
 
           curl -s -X POST http://localhost:3000/api/aggregate \
             -H "Content-Type: application/json" \
-            -d "{\"guildIds\":$GUILDS_JSON,\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
+            -d "{\"guildIds\":[3,4,5,6],\"year\":$NOW_YEAR,\"month\":$((10#$NOW_MONTH))}" \
             -o artifacts/latest.json \
             --max-time 180
 

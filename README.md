@@ -54,7 +54,7 @@ GITHUB_TOKEN을 넣지 않아도 대시보드 자체는 사용 가능하지만, 
 - 세션이 만료되어 실패하면 대시보드에 로그인 한 번 해주면 다음 실행부터 다시 동작
 
 **따로 설정할 Secret:**
-- `CODYSSEY_GUILDS` (옵션, 기본 `4`): 길드 ID 콤마 구분
+- 조회 대상 길드는 서버와 Actions에서 `3,4,5,6`으로 고정되며 하나의 통합 랭킹으로 집계됩니다.
 - `GITHUB_TOKEN_SYNC` (Codespaces용 PAT. 로컬에서는 `GITHUB_TOKEN` 환경변수로 사용)
 - `CODYSSEY_SESSION`은 **자동으로 생성/갱신됨** (수동으로 넣지 마세요!)
 
