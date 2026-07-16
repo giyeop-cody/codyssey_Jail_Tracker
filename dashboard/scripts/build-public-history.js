@@ -8,7 +8,8 @@ const { spawnSync } = require("child_process");
 const artifactsDir = path.resolve(process.argv[2] || "artifacts");
 const siteDir = path.resolve(process.argv[3] || "_site");
 const publicBaseUrl = (process.argv[4] || "").replace(/\/$/, "");
-const appHtml = path.resolve(__dirname, "../public/app.html");
+const publicDir = path.resolve(__dirname, "../public");
+const appHtml = path.join(publicDir, "app.html");
 const sanitizer = path.resolve(__dirname, "sanitize-for-public.js");
 const dataDir = path.join(siteDir, "data");
 
@@ -121,6 +122,9 @@ async function main() {
   fs.mkdirSync(dataDir, { recursive: true });
   fs.copyFileSync(appHtml, path.join(siteDir, "index.html"));
   fs.copyFileSync(appHtml, path.join(siteDir, "app.html"));
+  for (const asset of ["app.css", "app.js"]) {
+    fs.copyFileSync(path.join(publicDir, asset), path.join(siteDir, asset));
+  }
 
   await restorePublishedHistory();
   const rawFiles = discoverRawMonthlyFiles();
