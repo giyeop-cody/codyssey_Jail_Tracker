@@ -41,6 +41,11 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "public")));
 
+// /app 과 /app/ 로 접속 시 로그인 폼이 있는 풀 대시보드(app.html) 제공
+app.get(["/app", "/app/"], (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "app.html"));
+});
+
 // ---------- 세션 ----------
 let session = {
   cookies: {},
