@@ -22,7 +22,6 @@ const PORT = process.env.PORT || 3000;
 
 const API_BASE = "https://api.usr.codyssey.kr";
 const AUTH_URL = "https://api.ams.codyssey.kr/authenticate";
-const MAIN_ORIGIN = "https://usr.codyssey.kr";
 const CACHE_TTL_MS = 2 * 60 * 1000;
 // TRACKED_GUILD_IDS는 클라이언트 입력으로 변경할 수 없는 서버 고정 범위다.
 const COOKIE_FILE = process.env.SECOM_COOKIE_FILE || path.join(__dirname, ".session-cookies.json");
@@ -125,12 +124,29 @@ function cacheGet(k) {
 function cacheSet(k, d) { cache.set(k, { ts: Date.now(), data: d }); }
 function clearCache() { cache.clear(); }
 
+function isUnauthenticatedResponse(data) {
+  return !!(data && (data.__unauthenticated || data.__loginRedirect));
+}
+
+function invalidateSession(reason = "") {
+  session = {
+    cookies: {},
+    userId: null,
+    loggedInAt: null,
+    // 만료된 환경변수/디스크 세션을 같은 요청에서 계속 재주입하지 않는다.
+    autoLoginTried: true,
+  };
+  clearCache();
+  try { if (fs.existsSync(COOKIE_FILE)) fs.unlinkSync(COOKIE_FILE); } catch (e) {}
+  if (reason) console.warn(`[auth] Session invalidated: ${reason}`);
+}
+
 // ---------- 인증 fetch ----------
 async function authFetch(url, options = {}) {
   if ((!options.method || options.method === "GET")) {
     const cached = cacheGet(url);
     if (cached) {
-      if (!cached.__unauthenticated) return cached;
+      if (!isUnauthenticatedResponse(cached)) return cached;
       cache.delete(url);
     }
   }
@@ -181,11 +197,13 @@ async function authFetch(url, options = {}) {
 // 세션 유효성 체크 (메인 페이지 호출해서 정상 응답 오는지)
 async function validateSession() {
   try {
-    const data = await authFetch(MAIN_ORIGIN + "/main/", { method: "GET" });
-    if (data && data.__unauthenticated) return false;
-    // 실제 로그인된 메인 페이지라면 HTML에 로그인 식별 문자열이 있을 것.
-    // 단순히 리다이렉트/401만 아니면 유효로 간주
-    return true;
+    // usr.codyssey.kr/main은 인증과 무관하게 항상 SPA HTML을 반환하므로
+    // 실제 인증이 필요한 길드 API로 JSESSIONID 유효성을 확인한다.
+    const probeGuildId = TRACKED_GUILD_IDS[0];
+    const url = `${API_BASE}/guild/${probeGuildId}/detail?guildSeasonId=5&weekNo=9`;
+    const data = await authFetch(url, { method: "GET" });
+    if (isUnauthenticatedResponse(data)) return false;
+    return !!(data && data.code === 200 && data.result);
   } catch (e) {
     return false;
   }
@@ -229,9 +247,6 @@ async function doLoginWithCredentials(userId, password) {
     session.autoLoginTried = true;
     clearCache();
     saveCookiesToDisk();
-    try { await authFetch(MAIN_ORIGIN + "/main/", { method: "GET" }); } catch (e) {}
-    // GitHub Secret 자동 동기화 (비동기, 결과 기다리지 않음)
-    syncSessionToGitHub().catch(err => console.error("[github-sync] error:", err.message));
     return true;
   }
   return false;
@@ -315,8 +330,9 @@ async function syncSessionToGitHub() {
 }
 
 // ---------- 자동 로그인 (파일/환경변수) ----------
-async function tryAutoLoginFromEnv() {
-  if (session.autoLoginTried && session.cookies["JSESSIONID"]) return true;
+let autoLoginInFlight = null;
+
+async function performAutoLoginFromEnv() {
   session.autoLoginTried = true;
 
   // 0) 디스크에 저장된 쿠키가 있으면 우선 복원
@@ -326,8 +342,8 @@ async function tryAutoLoginFromEnv() {
       console.log("[auth] Session from disk is valid ✓");
       return true;
     }
-    console.log("[auth] Session from disk expired → will re-login");
-    session.cookies = {};
+    console.log("[auth] Session from disk expired → showing login form");
+    invalidateSession("disk session expired");
   }
 
   // 1) 환경변수로 세션 ID 직접 주입 (Actions의 Secret에서 오는 경우)
@@ -335,11 +351,13 @@ async function tryAutoLoginFromEnv() {
     setSessionId(process.env.CODYSSEY_SESSION);
     session.userId = process.env.CODYSSEY_ID || "(session)";
     session.loggedInAt = new Date().toISOString();
-    saveCookiesToDisk();
     console.log("[auth] Using session cookie from CODYSSEY_SESSION env var");
-    if (await validateSession()) return true;
-    console.log("[auth] CODYSSEY_SESSION invalid, falling through");
-    session.cookies = {};
+    if (await validateSession()) {
+      saveCookiesToDisk();
+      return true;
+    }
+    console.log("[auth] CODYSSEY_SESSION expired → showing login form");
+    invalidateSession("CODYSSEY_SESSION expired");
   }
 
   // 2) ID/PW 자동 로그인 모드
@@ -349,21 +367,36 @@ async function tryAutoLoginFromEnv() {
       const ok = await doLoginWithCredentials(process.env.CODYSSEY_ID, process.env.CODYSSEY_PW);
       if (ok) {
         console.log("[auth] Auto-login success ✓ (session saved to disk)");
+        await syncSessionToGitHub();
         return true;
       }
       console.log("[auth] Auto-login failed");
-      session.cookies = {};
+      invalidateSession("credential auto-login failed");
       return false;
     } catch (err) {
       console.error("[auth] Auto-login error:", err.message);
+      invalidateSession("credential auto-login error");
       return false;
     }
   }
   return false;
 }
 
+async function tryAutoLoginFromEnv() {
+  if (autoLoginInFlight) return autoLoginInFlight;
+  if (session.autoLoginTried) return !!session.cookies["JSESSIONID"];
+
+  autoLoginInFlight = performAutoLoginFromEnv();
+  try {
+    return await autoLoginInFlight;
+  } finally {
+    autoLoginInFlight = null;
+  }
+}
+
 // ---------- API 라우트 ----------
 app.get("/api/session", async (req, res) => {
+  await tryAutoLoginFromEnv();
   const hasSession = !!session.cookies["JSESSIONID"];
   res.json({
     loggedIn: hasSession,
@@ -373,7 +406,7 @@ app.get("/api/session", async (req, res) => {
     authMode: process.env.CODYSSEY_SESSION ? "session-env" :
               (process.env.CODYSSEY_ID && process.env.CODYSSEY_PW ? "credentials-env" : "interactive"),
     githubSync: {
-      enabled: githubSyncStatus.enabled || githubSyncStatus.configured,
+      enabled: githubSyncStatus.enabled,
       configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
       lastSync: githubSyncStatus.lastSync,
       lastError: githubSyncStatus.lastError,
@@ -400,20 +433,29 @@ app.post("/api/login", async (req, res) => {
 
     const ok = await doLoginWithCredentials(userId, password);
     if (ok) {
-      return res.json({ success: true, userId });
+      // 로그인 응답 전에 JSESSIONID를 Repository Secret에 복사한다.
+      // 실패해도 대시보드 로그인은 유지하되 UI가 동기화 오류를 명확히 안내한다.
+      const githubSynced = await syncSessionToGitHub();
+      return res.json({
+        success: true,
+        userId,
+        githubSynced,
+        githubSyncError: githubSynced ? null : githubSyncStatus.lastError,
+      });
     }
-    session = { cookies: {}, userId: null, loggedInAt: null, autoLoginTried: true };
+    invalidateSession("interactive login failed");
     return res.status(401).json({ success: false, error: "아이디 또는 비밀번호가 올바르지 않습니다." });
   } catch (err) {
+    invalidateSession("interactive login error");
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
 app.post("/api/logout", (req, res) => {
   const envProvided = !!(process.env.CODYSSEY_SESSION || (process.env.CODYSSEY_ID && process.env.CODYSSEY_PW));
-  session = { cookies: {}, userId: null, loggedInAt: null, autoLoginTried: false };
-  clearCache();
-  try { if (fs.existsSync(COOKIE_FILE)) fs.unlinkSync(COOKIE_FILE); } catch (e) {}
+  invalidateSession("logout");
+  // 명시적 로그아웃 뒤에는 환경변수 자동 인증을 다음 요청에서 한 번 재검증한다.
+  session.autoLoginTried = false;
   if (envProvided) {
     // 서버 재시작 시 환경변수로 재로그인되므로 명시적 알림
     return res.json({ success: true, note: "브라우저 세션은 로그아웃되었습니다. 서버 환경변수 인증은 다음 요청에서 재시도됩니다." });
@@ -488,7 +530,10 @@ app.get("/api/guild/:guildId", async (req, res) => {
     const weekNo = req.query.weekNo || 9;
     const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
     const data = await authFetch(url);
-    if (data.__unauthenticated) return res.status(401).json({ error: "로그인 필요", requireAuth: true });
+    if (isUnauthenticatedResponse(data)) {
+      invalidateSession("guild API rejected session");
+      return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
+    }
     if (data.code !== 200) return res.status(404).json({ error: data.message });
     res.json(data.result);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -501,7 +546,10 @@ app.get("/api/secom/:mbrId", async (req, res) => {
     const month = String(req.query.month).padStart(2, "0");
     const url = `${API_BASE}/rest/secom/detail?mbrId=${mid}&year=${year}&month=${month}`;
     const data = await authFetch(url);
-    if (data.__unauthenticated) return res.status(401).json({ error: "로그인 필요", requireAuth: true });
+    if (isUnauthenticatedResponse(data)) {
+      invalidateSession("SECOM API rejected session");
+      return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
+    }
     res.json(data);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -524,8 +572,9 @@ app.post("/api/aggregate", async (req, res) => {
     const guildResults = await Promise.all(targetGuildIds.map(async (gid) => {
       const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
       const response = await authFetch(url);
-      if (response && response.__unauthenticated) {
-        const err = new Error("세션 만료");
+      if (isUnauthenticatedResponse(response)) {
+        invalidateSession(`guild ${gid} rejected session`);
+        const err = new Error("세션이 만료되었습니다");
         err.status = 401;
         throw err;
       }
@@ -557,13 +606,16 @@ app.post("/api/aggregate", async (req, res) => {
           try {
             const url = `${API_BASE}/rest/secom/detail?mbrId=${mid}&year=${year}&month=${mm}`;
             const data = await authFetch(url);
-            if (data.__unauthenticated) throw new Error("unauthenticated");
+            if (isUnauthenticatedResponse(data)) throw new Error("unauthenticated");
             return [mid, data];
           } catch (err) { return [mid, { success: false, error: err.message }]; }
         })
       );
       for (const [mid, data] of results) {
-        if (data.error === "unauthenticated") return res.status(401).json({ error: "세션 만료", requireAuth: true });
+        if (data.error === "unauthenticated") {
+          invalidateSession("SECOM aggregate rejected session");
+          return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
+        }
         const info = memberMap.get(mid);
         if (!data.success) { members.push({ ...info, totalSeconds: 0, attendedDays: 0, days: [] }); continue; }
         const detail = data.detail_list || [];
@@ -658,6 +710,13 @@ app.post("/api/aggregate", async (req, res) => {
         loggedInAs: session.userId,
         authMode: process.env.CODYSSEY_SESSION ? "session-env" :
                   (process.env.CODYSSEY_ID ? "credentials-env" : "interactive"),
+        githubSync: {
+          enabled: githubSyncStatus.enabled,
+          configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
+          lastSync: githubSyncStatus.lastSync,
+          lastError: githubSyncStatus.lastError,
+          repository: GITHUB_REPOSITORY,
+        },
       },
       members: members.sort((a,b)=>b.totalSeconds-a.totalSeconds),
       topMembers: members.filter(m=>m.totalSeconds>0).sort((a,b)=>b.totalSeconds-a.totalSeconds).slice(0,50),

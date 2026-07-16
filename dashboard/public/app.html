@@ -372,6 +372,7 @@ let currentMonth = new Date().getMonth() + 1;
 let currentYear = new Date().getFullYear();
 let PUBLIC_MODE = false;       // GitHub Pages 정적 뷰
 let MEMBER_KEY = 'mbrId';      // 라이브는 'mbrId', 공개는 '_publicId'
+let REFRESH_TIMER = null;
 
 async function apiFetch(url, opts) {
   const res = await fetch(url, opts);
@@ -386,6 +387,28 @@ async function checkSession() {
   } catch (e) {
     return { __static: true };
   }
+}
+
+function showLoginScreen(message = '') {
+  DATA = null;
+  if (REFRESH_TIMER) {
+    clearInterval(REFRESH_TIMER);
+    REFRESH_TIMER = null;
+  }
+  document.getElementById('mainUI').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+
+  const errBox = document.getElementById('loginError');
+  if (message) {
+    errBox.textContent = message;
+    errBox.style.display = 'block';
+  } else {
+    errBox.textContent = '';
+    errBox.style.display = 'none';
+  }
+
+  document.getElementById('loginPw').value = '';
+  setTimeout(() => document.getElementById('loginId').focus(), 0);
 }
 
 async function loadPublicData() {
@@ -421,6 +444,9 @@ async function doLogin() {
     const data = await res.json();
     if (data.success) {
       await boot();
+      if (data.githubSynced === false) {
+        alert(`로그인은 성공했지만 GitHub Secret 동기화에 실패했습니다.\n\n${data.githubSyncError || 'GITHUB_TOKEN / GITHUB_REPOSITORY 설정을 확인해주세요.'}\n\n세션은 유지되며 상단의 '재시도' 버튼으로 다시 동기화할 수 있습니다.`);
+      }
     } else {
       errBox.textContent = data.error || '로그인에 실패했습니다.';
       errBox.style.display = 'block';
@@ -455,12 +481,14 @@ async function fetchAggregate(opts) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(opts)
   });
-  if (res.status === 401) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || '로그인이 필요합니다');
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || data.requireAuth) {
+    const authError = new Error(data.error || '로그인이 필요합니다');
+    authError.requireAuth = true;
+    throw authError;
   }
-  if (!res.ok) throw new Error('API 오류 ' + res.status);
-  return res.json();
+  if (!res.ok) throw new Error(data.error || ('API 오류 ' + res.status));
+  return data;
 }
 
 function fmtDur(sec) {
@@ -505,9 +533,10 @@ async function loadData() {
     currentYear = year; currentMonth = month;
     render();
   } catch (err) {
-    if (err.message.includes('로그인')) {
-      alert('세션이 만료되었습니다. 다시 로그인해주세요.');
-      location.reload();
+    if (err.requireAuth) {
+      // 서버의 만료 세션을 지운 뒤 새로고침 없이 즉시 로그인 폼으로 전환한다.
+      await fetch('/api/logout', { method: 'POST' }).catch(() => {});
+      showLoginScreen('세션이 만료되었습니다. 다시 로그인하면 새 세션 쿠키가 GitHub Actions Secret에 자동 저장됩니다.');
       return;
     }
     document.getElementById('app').innerHTML =
@@ -900,7 +929,8 @@ async function boot() {
       document.getElementById('year').value = currentYear;
       document.getElementById('month').value = currentMonth;
       render();
-      setInterval(() => { if (DATA) loadData(); }, 5*60*1000);
+      if (REFRESH_TIMER) clearInterval(REFRESH_TIMER);
+      REFRESH_TIMER = setInterval(() => { if (DATA) loadData(); }, 5*60*1000);
     } catch (err) {
       document.getElementById('app').innerHTML =
         `<div class="empty-state">❌ ${err.message}</div>`;
@@ -916,11 +946,14 @@ async function boot() {
     document.getElementById('month').value = n.getUTCMonth()+1;
     currentYear = n.getUTCFullYear(); currentMonth = n.getUTCMonth()+1;
     await loadData();
-    setInterval(() => { if (DATA) loadData(); }, 90000);
+    if (DATA) {
+      if (REFRESH_TIMER) clearInterval(REFRESH_TIMER);
+      REFRESH_TIMER = setInterval(() => { if (DATA) loadData(); }, 90000);
+    }
   } else {
-    document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('mainUI').style.display = 'none';
-    document.getElementById('loginId').focus();
+    showLoginScreen(sess.authMode === 'session-env'
+      ? '저장된 세션이 없거나 만료되었습니다. 다시 로그인해주세요.'
+      : '');
   }
 }
 
