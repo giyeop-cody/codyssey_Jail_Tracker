@@ -28,6 +28,16 @@ test("app.html에 길드 번호 입력/선택 UI가 없다", () => {
   }
 });
 
+test("월 기록이 없는 멤버도 0시간으로 전체 랭킹에 포함한다", () => {
+  const start = APP_HTML.indexOf("function renderRanking()");
+  const end = APP_HTML.indexOf("function renderCharts()", start);
+  const rankingSource = APP_HTML.slice(start, end);
+
+  assert.match(rankingSource, /DATA\.members\.slice\(\)/);
+  assert.doesNotMatch(rankingSource, /filter\(m => m\.totalSeconds > 0\)/);
+  assert.match(rankingSource, /const totalHours = m\.totalHours \?\? 0/);
+});
+
 test("네 길드 멤버를 mbrId 기준의 단일 목록으로 병합한다", () => {
   const guildResults = TRACKED_GUILD_IDS.map((guildId, index) => ({
     guildInfo: {
@@ -48,17 +58,20 @@ test("네 길드 멤버를 mbrId 기준의 단일 목록으로 병합한다", ()
     { mbrId: 300, mbrNm: "두번째길드", level: 5 },
   );
   guildResults[2].members.push({ mbrId: 400, mbrNm: "세번째길드", level: 6 });
-  guildResults[3].members.push({ mbrId: 500, mbrNm: "네번째길드", level: 8 });
+  guildResults[3].members.push(
+    { mbrId: 500, mbrNm: "네번째길드", level: 8 },
+    // 이름은 같지만 mbrId가 다르면 서로 다른 사람으로 유지되어야 한다.
+    { mbrId: 600, mbrNm: "중복멤버", level: 9 },
+  );
 
   const { guilds, memberMap } = mergeTrackedGuilds(guildResults);
 
   assert.deepEqual(guilds.map(g => g.guildId), [3, 4, 5, 6]);
-  assert.equal(memberMap.size, 5);
+  assert.equal(memberMap.size, 6);
   assert.deepEqual(memberMap.get(100).guildNames, ["테스트길드-1", "테스트길드-2"]);
-  assert.deepEqual(
-    [...memberMap.values()].map(member => member.name).sort(),
-    ["네번째길드", "두번째길드", "세번째길드", "중복멤버", "첫번째길드"].sort(),
-  );
+  assert.equal(memberMap.get(100).name, "중복멤버");
+  assert.equal(memberMap.get(600).name, "중복멤버");
+  assert.notEqual(memberMap.get(100).mbrId, memberMap.get(600).mbrId);
 });
 
 test("길드 응답이 하나라도 빠지면 부분 대시보드를 만들지 않는다", () => {
