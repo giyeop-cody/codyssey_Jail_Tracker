@@ -35,6 +35,8 @@ let githubSyncStatus = {
   enabled: false,
   configured: false,
   lastSync: null,
+  lastWorkflowDispatch: null,
+  workflowTriggered: false,
   lastError: null,
 };
 
@@ -256,7 +258,8 @@ async function doLoginWithCredentials(userId, password) {
 /**
  * GitHub Actions 시크릿 CODYSSEY_SESSION 에 현재 JSESSIONID를 자동 업로드.
  * - libsodium으로 SealedBox 암호화 필요
- * - Codespaces에서는 GH_PAT_SYNC, 로컬에서는 GITHUB_TOKEN에 Secret 수정 권한 PAT가 있어야 함
+ * - PAT에는 Repository Secrets 쓰기와 Actions 쓰기 권한이 모두 필요함
+ * - Secret 저장 직후 Collect SECOM Data workflow_dispatch를 호출함
  * - 대상 리포는 Codespaces 기본 환경변수 GITHUB_REPOSITORY에서 자동 확인
  */
 async function syncSessionToGitHub() {
@@ -274,53 +277,73 @@ async function syncSessionToGitHub() {
     return false;
   }
   githubSyncStatus.configured = true;
+  githubSyncStatus.workflowTriggered = false;
+  let secretUploaded = false;
 
   try {
-    const api = `https://api.github.com/repos/${repo}/actions/secrets`;
+    const repoApi = `https://api.github.com/repos/${repo}`;
+    const secretApi = `${repoApi}/actions/secrets`;
     const headers = {
       Authorization: `token ${token}`,
       Accept: "application/vnd.github+json",
       "User-Agent": "secom-dashboard",
       "X-GitHub-Api-Version": "2022-11-28",
     };
-    // 1. public key 조회
-    const keyRes = await fetch(api + "/public-key", { headers });
+
+    // 1. Repository Actions Secret 공개키 조회
+    const keyRes = await fetch(secretApi + "/public-key", { headers });
     if (!keyRes.ok) {
       throw new Error(`Failed to fetch public key: ${keyRes.status}`);
     }
     const keyData = await keyRes.json();
-    const publicKey = keyData.key;
-    const publicKeyId = keyData.key_id;
 
-    // 2. sodium으로 암호화
+    // 2. JSESSIONID 암호화
     await sodium.ready;
-    const binkey = sodium.from_base64(publicKey, sodium.base64_variants.ORIGINAL);
+    const binkey = sodium.from_base64(keyData.key, sodium.base64_variants.ORIGINAL);
     const binsec = sodium.from_string(jsid);
     const encBytes = sodium.crypto_box_seal(binsec, binkey);
     const encrypted = sodium.to_base64(encBytes, sodium.base64_variants.ORIGINAL);
 
-    // 3. secret 업로드
-    const putRes = await fetch(api + "/CODYSSEY_SESSION", {
+    // 3. CODYSSEY_SESSION 생성 또는 갱신
+    const putRes = await fetch(secretApi + "/CODYSSEY_SESSION", {
       method: "PUT",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({
         encrypted_value: encrypted,
-        key_id: publicKeyId,
+        key_id: keyData.key_id,
       }),
     });
     if (!putRes.ok && putRes.status !== 201 && putRes.status !== 204) {
       const errTxt = await putRes.text();
       throw new Error(`Failed to set secret: ${putRes.status} ${errTxt}`);
     }
+    secretUploaded = true;
     githubSyncStatus.lastSync = new Date().toISOString();
+    console.log(`[github-sync] ✅ CODYSSEY_SESSION 업로드 완료 (repo: ${repo})`);
+
+    // Secret 수정 자체는 workflow를 실행하지 않으므로 직접 workflow_dispatch를 요청한다.
+    const dispatchRes = await fetch(`${repoApi}/actions/workflows/collect.yml/dispatches`, {
+      method: "POST",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main" }),
+    });
+    if (dispatchRes.status !== 204) {
+      const errTxt = await dispatchRes.text();
+      throw new Error(`Collect workflow dispatch failed: ${dispatchRes.status} ${errTxt}`);
+    }
+
+    githubSyncStatus.lastWorkflowDispatch = new Date().toISOString();
+    githubSyncStatus.workflowTriggered = true;
     githubSyncStatus.enabled = true;
     githubSyncStatus.lastError = null;
-    console.log(`[github-sync] ✅ CODYSSEY_SESSION 업로드 완료 (repo: ${repo})`);
+    console.log("[github-sync] ✅ Collect SECOM Data 실행 요청 완료");
     return true;
   } catch (err) {
-    githubSyncStatus.lastError = err.message;
+    githubSyncStatus.lastError = secretUploaded
+      ? `CODYSSEY_SESSION 저장은 완료됐지만 Actions 실행에 실패했습니다: ${err.message}`
+      : err.message;
     githubSyncStatus.enabled = false;
-    console.error("[github-sync] ❌", err.message);
+    console.error("[github-sync] ❌", githubSyncStatus.lastError);
     return false;
   }
 }
@@ -405,6 +428,8 @@ app.get("/api/session", async (req, res) => {
       enabled: githubSyncStatus.enabled,
       configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
       lastSync: githubSyncStatus.lastSync,
+      lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
+      workflowTriggered: githubSyncStatus.workflowTriggered,
       lastError: githubSyncStatus.lastError,
       repository: GITHUB_REPOSITORY,
     },
@@ -436,6 +461,7 @@ app.post("/api/login", async (req, res) => {
         success: true,
         userId,
         githubSynced,
+        workflowTriggered: githubSyncStatus.workflowTriggered,
         githubSyncError: githubSynced ? null : githubSyncStatus.lastError,
       });
     }
@@ -710,6 +736,8 @@ app.post("/api/aggregate", async (req, res) => {
           enabled: githubSyncStatus.enabled,
           configured: githubSyncStatus.configured || !!(GITHUB_TOKEN && GITHUB_REPOSITORY),
           lastSync: githubSyncStatus.lastSync,
+          lastWorkflowDispatch: githubSyncStatus.lastWorkflowDispatch,
+          workflowTriggered: githubSyncStatus.workflowTriggered,
           lastError: githubSyncStatus.lastError,
           repository: GITHUB_REPOSITORY,
         },

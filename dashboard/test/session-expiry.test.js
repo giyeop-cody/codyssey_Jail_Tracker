@@ -36,11 +36,13 @@ test("서버는 인증 거부 시 메모리와 디스크의 만료 세션을 제
   assert.match(serverSource, /invalidateSession\("SECOM aggregate rejected session"\)/);
 });
 
-test("로그인 응답 전에 새 JSESSIONID를 GitHub Secret에 동기화한다", () => {
+test("로그인 시 JSESSIONID 저장 후 수집 workflow를 즉시 실행한다", () => {
   const loginRoute = sourceBetween(serverSource, 'app.post("/api/login"', 'app.post("/api/logout"');
   assert.match(loginRoute, /const githubSynced = await syncSessionToGitHub\(\)/);
   assert.match(loginRoute, /githubSyncError/);
   assert.match(serverSource, /process\.env\.GH_PAT_SYNC \|\| process\.env\.GITHUB_TOKEN/);
+  assert.match(serverSource, /actions\/workflows\/collect\.yml\/dispatches/);
+  assert.match(serverSource, /workflowTriggered = true/);
 });
 
 test("정적 Pages에 세션이 없으면 Codespace 로그인 버튼을 표시한다", () => {

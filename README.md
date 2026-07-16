@@ -13,7 +13,8 @@
 1. 저장된 Codyssey 세션이 없거나 만료되면 로그인 폼을 표시합니다.
 2. Codyssey 계정으로 로그인해 새 `JSESSIONID`를 받습니다.
 3. 서버가 `JSESSIONID`를 Repository Actions Secret `CODYSSEY_SESSION`으로 생성/갱신합니다.
-4. 3·4·5·6길드를 모두 조회하고 멤버를 하나의 대시보드로 통합합니다.
+4. Secret 저장 직후 `Collect SECOM Data`를 `workflow_dispatch`로 자동 실행합니다.
+5. 3·4·5·6길드를 모두 조회하고 멤버를 하나의 대시보드로 통합합니다.
 
 ### GitHub Pages
 
@@ -33,9 +34,10 @@ GitHub **Settings → Developer settings → Personal access tokens → Fine-gra
 - **Repository access**: `Only select repositories`
 - 대상 저장소: `giyeop-cody/codyssey_Jail_Tracker`
 - **Repository permissions → Secrets**: `Read and write`
+- **Repository permissions → Actions**: `Read and write`
 - 만료 기간은 가능한 짧게 설정
 
-Classic PAT를 사용한다면 `repo` 스코프가 필요합니다.
+`Secrets` 권한은 `CODYSSEY_SESSION` 저장에, `Actions` 권한은 저장 직후 `Collect SECOM Data` 실행에 필요합니다. Classic PAT를 사용한다면 `repo` 스코프가 필요합니다.
 
 ### 2. Codespaces Secret 등록
 
@@ -57,11 +59,11 @@ Secret을 새로 등록하거나 수정했다면 실행 중인 Codespace를 **St
 1. 저장소에서 **Code → Codespaces → Create codespace on main**
 2. 포트 3000의 `/app.html` 열기
 3. Codyssey 계정으로 로그인
-4. 상단의 `GitHub 연동됨` 확인
+4. 상단의 `수집 요청 완료` 확인
 5. 저장소 **Settings → Secrets and variables → Actions**에서 `CODYSSEY_SESSION` 생성 확인
-6. **Actions → Collect SECOM Data → Run workflow** 실행
+6. **Actions → Collect SECOM Data**에 `workflow_dispatch` 실행이 자동 생성됐는지 확인
 
-`CODYSSEY_SESSION` 값은 직접 등록하지 않습니다. Codespace 로그인 서버가 자동으로 생성하고 세션 만료 때마다 갱신합니다.
+`CODYSSEY_SESSION` 값은 직접 등록하지 않습니다. Codespace 로그인 서버가 자동으로 생성하고 세션 만료 때마다 갱신하며, Secret 저장 직후 수집 Action도 자동 실행합니다.
 
 ---
 
@@ -108,7 +110,7 @@ npm start
 
 ## GitHub Actions
 
-`Collect SECOM Data`가 30분마다 실행되어:
+`Collect SECOM Data`는 Codespace 로그인 직후 즉시 실행되고, 이후 30분마다 반복 실행되어:
 
 - Actions Secret `CODYSSEY_SESSION`으로 인증
 - 3·4·5·6길드 멤버를 `mbrId` 기준으로 중복 제거 및 통합

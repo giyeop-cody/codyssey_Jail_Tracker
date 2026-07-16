@@ -16,7 +16,7 @@
   "waitFor": "postCreateCommand",
   "secrets": {
     "GH_PAT_SYNC": {
-      "description": "codyssey_Jail_Tracker의 Actions Secret을 수정할 수 있는 GitHub PAT. 로그인 시 JSESSIONID를 CODYSSEY_SESSION으로 저장합니다."
+      "description": "Repository Secrets 및 Actions 쓰기 권한이 있는 GitHub PAT. JSESSIONID를 CODYSSEY_SESSION으로 저장하고 Collect workflow를 실행합니다."
     }
   },
   "customizations": {
