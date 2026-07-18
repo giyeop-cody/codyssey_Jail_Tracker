@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const { isCurrentlyInside, isOpenSession, kstDateStrings } = require("../lib/open-session");
+const { isCurrentlyInside, isOpenSession, kstDateStrings, prevYearMonth, hasOpenSessionOn } = require("../lib/open-session");
 
 const SERVER_JS = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
 
@@ -67,4 +67,32 @@ test("server.js가 롤오버 판정 함수를 사용하도록 배선되어 있�
   assert.ok(SERVER_JS.includes("isCurrentlyInside(d.date, s, todayStr, yesterdayStr)"), "입실 판정 호출 누락");
   // 과거 구현(오늘 날짜 게이트) 부활 방지
   assert.equal(SERVER_JS.includes("d.date === todayStr && !s.exit_time"), false, "오늘 날짜 게이트 부활");
+});
+
+test("prevYearMonth: 평달과 연 경계", () => {
+  assert.deepEqual(prevYearMonth(2026, 8), { year: 2026, month: 7 });
+  assert.deepEqual(prevYearMonth(2027, 1), { year: 2026, month: 12 });
+});
+
+test("hasOpenSessionOn: 목표 날짜에 열린 세션이 있을 때만 true", () => {
+  const detail = [
+    { date: "2026-07-30", sessions: [{ entry_time: "09:00:00", exit_time: "23:00:00", is_missing: false }] },
+    { date: "2026-07-31", sessions: [
+      { entry_time: "10:00:00", exit_time: "18:00:00", is_missing: false },
+      { entry_time: "23:10:00", exit_time: null, is_missing: true, duration_seconds: 0 },
+    ]},
+  ];
+  assert.equal(hasOpenSessionOn(detail, "2026-07-31"), true);
+  assert.equal(hasOpenSessionOn(detail, "2026-07-30"), false);
+  assert.equal(hasOpenSessionOn(detail, "2026-08-01"), false);
+  assert.equal(hasOpenSessionOn([], "2026-07-31"), false);
+  assert.equal(hasOpenSessionOn(undefined, "2026-07-31"), false);
+});
+
+test("server.js가 월 경계 전월 조회 패스를 포함한다", () => {
+  assert.ok(SERVER_JS.includes("prevYearMonth("), "전월 계산 누락");
+  assert.ok(SERVER_JS.includes("hasOpenSessionOn("), "전월 열린 세션 스캔 누락");
+  assert.ok(SERVER_JS.includes("insideIds.add(mid)"), "입실 ID 수집 누락");
+  // 전월 패스는 현재 월 집계이면서 어제가 요청 월 밖일 때만 발동해야 한다
+  assert.ok(SERVER_JS.includes("isCurrentMonth && !yesterdayStr.startsWith(requestedKey)"), "월 경계 발동 조건 누락");
 });

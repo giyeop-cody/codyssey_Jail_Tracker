@@ -29,4 +29,22 @@ function kstDateStrings(nowMs = Date.now()) {
   return { todayStr, yesterdayStr };
 }
 
-module.exports = { isOpenSession, isCurrentlyInside, kstDateStrings };
+// 전월 (year, month) 계산 — 1월이면 전년 12월
+function prevYearMonth(year, month) {
+  if (month === 1) return { year: year - 1, month: 12 };
+  return { year, month: month - 1 };
+}
+
+// 한 멤버의 월 상세(detail_list)에서 목표 날짜에 열린 세션이 하나라도 있으면 true.
+// 월 경계 대응에서 전월 데이터를 스캔할 때 쓴다.
+function hasOpenSessionOn(detailList, targetDate) {
+  for (const d of detailList || []) {
+    if (d.date !== targetDate) continue;
+    for (const s of d.sessions || []) {
+      if (isOpenSession(s)) return true;
+    }
+  }
+  return false;
+}
+
+module.exports = { isOpenSession, isCurrentlyInside, kstDateStrings, prevYearMonth, hasOpenSessionOn };
