@@ -7,6 +7,8 @@ on:
   schedule:
     # GitHub cron은 UTC 기준이며, 매시 00분/30분에 실행된다.
     - cron: '*/30 * * * *'
+    # 스케줄러 누락 대비 이중 스트림 (2026-07-18 공백 관측)
+    - cron: '5,35 * * * *'
   workflow_dispatch:
     inputs:
       backfill_from:
