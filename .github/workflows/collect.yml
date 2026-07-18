@@ -48,12 +48,13 @@ jobs:
 
       # 로스터(길드 멤버 mbrId·이름·레벨·프로필)는 준정적 데이터라
       # actions/cache에 보관해 두고 8시간 이내이면 길드 API를 생략한다.
+      # 키 접두어 v2: 이전 캐시에 email이 포함되어 있어 키를 교체했다 (이전 캐시는 미사용 기간 후 GitHub가 자동 만료).
       - name: Restore roster cache
         uses: actions/cache/restore@v4
         with:
           path: dashboard/.roster-cache
-          key: secom-roster-${{ github.run_id }}
-          restore-keys: secom-roster-
+          key: secom-roster-v2-${{ github.run_id }}
+          restore-keys: secom-roster-v2-
 
       - name: Verify session secret
         env:
@@ -176,4 +177,4 @@ jobs:
         if: always()
         with:
           path: dashboard/.roster-cache
-          key: secom-roster-${{ github.run_id }}
+          key: secom-roster-v2-${{ github.run_id }}
