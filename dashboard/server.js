@@ -14,6 +14,7 @@ const setCookie = require("set-cookie-parser");
 const path = require("path");
 const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
+const { isCurrentlyInside, kstDateStrings } = require("./lib/open-session");
 
 const fs = require("fs");
 
@@ -509,8 +510,8 @@ app.post("/api/aggregate", async (req, res) => {
     const weekdayMap = new Map();
     let currentlyInside = [];
     const mm = String(month).padStart(2, "0");
-    const kst = new Date(Date.now() + 9*3600*1000);
-    const todayStr = `${kst.getUTCFullYear()}-${String(kst.getUTCMonth()+1).padStart(2,'0')}-${String(kst.getUTCDate()).padStart(2,'0')}`;
+    // KST 기준 오늘/어제. 밤샘 세션은 전날 레코드에 남으므로 입실 판정에 둘 다 쓴다.
+    const { todayStr, yesterdayStr } = kstDateStrings();
 
     const mbrIds = Array.from(memberMap.keys());
     const BATCH = 5;
@@ -561,7 +562,8 @@ app.post("/api/aggregate", async (req, res) => {
           for (const s of d.sessions || []) {
             dayRaw += s.duration_seconds || 0;
             if (s.is_missing) missing++;
-            if (d.date === todayStr && !s.exit_time && s.entry_time && s.is_missing) insideNow = true;
+            // 자정 롤오버 대응: 오늘뿐 아니라 어제 날짜의 열린 세션도 입실 중으로 본다.
+            if (isCurrentlyInside(d.date, s, todayStr, yesterdayStr)) insideNow = true;
             accumulateHours(hourMap, s.entry_time, s.exit_time, s.duration_seconds, s.is_missing);
           }
           totalRaw += dayRaw;
