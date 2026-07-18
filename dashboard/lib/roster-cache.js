@@ -6,6 +6,9 @@
 // 이 모듈은 그 로스터의 캐시 직렬화/신선도 판정만 담당하는 순수 함수 모음이다.
 // 실행 환경(GitHub Actions)에서는 actions/cache로 .roster-cache/ 디렉터리를
 // 유지하고, 서버는 SECOM_ROSTER_FILE/SECOM_ROSTER_MAX_AGE_H로 참조한다.
+//
+// 캐시에는 공개 대시보드 수준의 필드만 둔다. 이메일 주소(개인정보)는 집계와
+// 화면 표시 어디에도 쓰이지 않으므로 serializeRoster 단계에서 제외한다.
 
 const DEFAULT_MAX_AGE_HOURS = 8; // 하루 3회 갱신 수준
 
@@ -28,12 +31,20 @@ function isRosterFresh(parsed, maxAgeHours = DEFAULT_MAX_AGE_HOURS, nowMs = Date
   return rosterAgeMs(parsed, nowMs) <= maxAgeHours * 3600 * 1000;
 }
 
-// mergeTrackedGuilds의 결과를 직렬화 가능한 형태로 변환
+// mergeTrackedGuilds의 결과를 직렬화 가능한 형태로 변환.
+// email(개인정보)은 캐시에 남기지 않는다. 원본 memberMap의 객체는 변경하지 않는다.
 function serializeRoster(guilds, memberMap, now = new Date()) {
+  const members = memberMap instanceof Map
+    ? [...memberMap.values()].map((member) => {
+        if (!member || typeof member !== "object") return member;
+        const { email, ...rest } = member;
+        return rest;
+      })
+    : [];
   return {
     fetchedAt: now.toISOString(),
     guilds: Array.isArray(guilds) ? guilds : [],
-    members: memberMap instanceof Map ? [...memberMap.values()] : []
+    members
   };
 }
 
