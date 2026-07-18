@@ -304,17 +304,24 @@
     border-radius: 50%; animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
-  /* 모바일: 캘린더 가로 넘침 수정 — aspect-ratio:1 + min-height:72px가 셀 최소폭 72px을 강제해
-     7열 최소 528px 필요 → 좁은 화면에서 페이지 좌우 스크롤이 생겼음 (2026-07-18 제보) */
+  /* 모바일: 캘린더 가로 넘침 수정 —
+     1차 원인: aspect-ratio:1 + min-height:72px가 셀 최소폭 72px 강제 (7열 최소 528px)
+     2차 원인: 셀 텍스트("368.3h")의 min-content 최소폭이 grid 1fr 트랙을 밀어냄
+     → min-width:0 + overflow:hidden으로 grid 자동 최소폭 해제가 핵심 (2026-07-18 제보) */
   @media (max-width: 600px) {
-    .cal-grid { gap: 3px; }
+    main { padding: 16px 12px 32px; }
+    .card { padding: 14px 12px; }
+    .cal-head { flex-wrap: wrap; gap: 8px; }
+    .cal-grid { gap: 2px; }
     .cal-day {
       aspect-ratio: auto;
+      min-width: 0;
       min-height: 44px;
-      padding: 4px 5px;
+      overflow: hidden;
+      padding: 4px 3px;
       border-radius: 6px;
     }
-    .cal-day .date { font-size: 12px; }
-    .cal-day .hours { font-size: 11px; margin-top: 1px; }
-    .cal-day .stat { display: none; } /* 공간 확보: 출석 인원은 날짜 상세에서 확인 */
+    .cal-day .date { font-size: 11px; }
+    .cal-day .hours { font-size: 10px; margin-top: 1px; white-space: nowrap; }
+    .cal-day .stat, .cal-day .heat { display: none; } /* 공간 확보: 인원/히트바는 날짜 상세에서 */
   }
