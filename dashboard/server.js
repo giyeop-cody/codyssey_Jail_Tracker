@@ -14,7 +14,7 @@ const setCookie = require("set-cookie-parser");
 const path = require("path");
 const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
-const { isCurrentlyInside, kstDateStrings } = require("./lib/open-session");
+const { isCurrentlyInside, isOpenSession, hasOpenSessionOn, kstDateStrings, prevYearMonth } = require("./lib/open-session");
 
 const fs = require("fs");
 
@@ -508,7 +508,7 @@ app.post("/api/aggregate", async (req, res) => {
     const dailyMap = new Map();
     const hourMap = new Map();
     const weekdayMap = new Map();
-    let currentlyInside = [];
+    const insideIds = new Set();
     const mm = String(month).padStart(2, "0");
     // KST 기준 오늘/어제. 밤샘 세션은 전날 레코드에 남으므로 입실 판정에 둘 다 쓴다.
     const { todayStr, yesterdayStr } = kstDateStrings();
@@ -581,7 +581,7 @@ app.post("/api/aggregate", async (req, res) => {
             })),
           });
         }
-        if (insideNow) currentlyInside.push({ mbrId: mid, name: info.name, level: info.level, profileImage: info.profileImage });
+        if (insideNow) insideIds.add(mid);
         members.push({
           ...info,
           totalSeconds: totalSec, totalRawSeconds: totalRaw,
@@ -594,6 +594,43 @@ app.post("/api/aggregate", async (req, res) => {
         });
       }
     }
+
+    // 월 경계 롤오버 대응: 오늘이 1일(KST)이면 어제(전월 말일)의 열린 세션은
+    // 전월 데이터에만 실려 있어 이번 달 집계만으로는 입실 목록이 하루 비게 된다.
+    // 이 경우에만 전월 상세를 추가 조회해 어제 열린 세션 소유자를 입실 목록에 병합한다.
+    const requestedKey = `${year}-${String(month).padStart(2, "0")}`;
+    const isCurrentMonth = todayStr.startsWith(requestedKey);
+    if (isCurrentMonth && !yesterdayStr.startsWith(requestedKey)) {
+      const prev = prevYearMonth(year, month);
+      const pmm = String(prev.month).padStart(2, "0");
+      console.log(`[aggregate] 월 경계 감지 — 전월(${prev.year}-${pmm}) 미퇴실 세션 추가 조회`);
+      for (let i = 0; i < mbrIds.length; i += BATCH) {
+        const batch = mbrIds.slice(i, i + BATCH);
+        const results = await Promise.all(
+          batch.map(async mid => {
+            try {
+              const url = `${API_BASE}/rest/secom/detail?mbrId=${mid}&year=${prev.year}&month=${pmm}`;
+              const data = await authFetch(url);
+              if (isUnauthenticatedResponse(data)) throw new Error("unauthenticated");
+              return [mid, data];
+            } catch (err) { return [mid, { success: false, error: err.message }]; }
+          })
+        );
+        for (const [mid, data] of results) {
+          if (data.error === "unauthenticated") {
+            invalidateSession("SECOM aggregate rejected session (prev-month pass)");
+            return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
+          }
+          if (!data.success) continue;
+          if (hasOpenSessionOn(data.detail_list || [], yesterdayStr)) insideIds.add(mid);
+        }
+      }
+    }
+
+    const currentlyInside = Array.from(insideIds).map(mid => {
+      const info = memberMap.get(mid) || {};
+      return { mbrId: mid, name: info.name, level: info.level, profileImage: info.profileImage };
+    });
 
     const dailyStats = Array.from(dailyMap.entries()).map(([date, map]) => {
       const ms = Array.from(map.entries()).map(([mid, sec]) => ({
