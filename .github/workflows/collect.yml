@@ -46,6 +46,15 @@ jobs:
         working-directory: dashboard
         run: npm ci
 
+      # 로스터(길드 멤버 mbrId·이름·레벨·프로필)는 준정적 데이터라
+      # actions/cache에 보관해 두고 8시간 이내이면 길드 API를 생략한다.
+      - name: Restore roster cache
+        uses: actions/cache/restore@v4
+        with:
+          path: dashboard/.roster-cache
+          key: secom-roster-${{ github.run_id }}
+          restore-keys: secom-roster-
+
       - name: Verify session secret
         env:
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
@@ -61,6 +70,8 @@ jobs:
           PORT: 3000
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
           BACKFILL_FROM: ${{ github.event.inputs.backfill_from || '' }}
+          SECOM_ROSTER_FILE: .roster-cache/roster.json
+          SECOM_ROSTER_MAX_AGE_H: '8'
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
@@ -155,3 +166,10 @@ jobs:
           path: dashboard/artifacts/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Save roster cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: dashboard/.roster-cache
+          key: secom-roster-${{ github.run_id }}

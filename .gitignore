@@ -4,3 +4,4 @@ dashboard/.session-cookies.json
 dashboard/artifacts/
 *.log
 .npm/
+dashboard/.roster-cache/
