@@ -304,3 +304,17 @@
     border-radius: 50%; animation: spin .8s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
+  /* 모바일: 캘린더 가로 넘침 수정 — aspect-ratio:1 + min-height:72px가 셀 최소폭 72px을 강제해
+     7열 최소 528px 필요 → 좁은 화면에서 페이지 좌우 스크롤이 생겼음 (2026-07-18 제보) */
+  @media (max-width: 600px) {
+    .cal-grid { gap: 3px; }
+    .cal-day {
+      aspect-ratio: auto;
+      min-height: 44px;
+      padding: 4px 5px;
+      border-radius: 6px;
+    }
+    .cal-day .date { font-size: 12px; }
+    .cal-day .hours { font-size: 11px; margin-top: 1px; }
+    .cal-day .stat { display: none; } /* 공간 확보: 출석 인원은 날짜 상세에서 확인 */
+  }
