@@ -15,6 +15,7 @@ const path = require("path");
 const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
 const { isCurrentlyInside, isOpenSession, hasOpenSessionOn, kstDateStrings, prevYearMonth } = require("./lib/open-session");
+const rosterCache = require("./lib/roster-cache");
 
 const fs = require("fs");
 
@@ -483,26 +484,59 @@ app.post("/api/aggregate", async (req, res) => {
     // UI, Actions, 외부 호출 모두 항상 3·4·5·6 길드 멤버를 하나의 memberMap으로 합친다.
     const targetGuildIds = [...TRACKED_GUILD_IDS];
 
-    // 네 길드를 각각 조회한다. 일부 길드 실패를 숨긴 채 부분 데이터만 보여주지 않도록
-    // 네 요청이 모두 성공해야 다음 단계로 진행한다.
-    const guildResults = await Promise.all(targetGuildIds.map(async (gid) => {
-      const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
-      const response = await authFetch(url);
-      if (isUnauthenticatedResponse(response)) {
-        invalidateSession(`guild ${gid} rejected session`);
-        const err = new Error("세션이 만료되었습니다");
-        err.status = 401;
-        throw err;
-      }
-      if (!response || response.code !== 200 || !response.result) {
-        const message = response && response.message ? response.message : "invalid response";
-        throw new Error(`길드 조회 실패 (${gid}): ${message}`);
-      }
-      return response.result;
-    }));
+    // 로스터(길드 멤버의 mbrId·이름·레벨·프로필)는 준정적 데이터라
+    // 입퇴실 기록(30분 주기)과 달리 하루 3~4회 갱신이면 충분하다.
+    // 캐시가 신선하면(기본 8시간) 길드 API를 생략하고,
+    // 갱신 조회가 실패할 때는 오래된 캐시라도 폴 백한다.
+    const rosterFile = process.env.SECOM_ROSTER_FILE || "";
+    const rosterMaxAgeH = Number(process.env.SECOM_ROSTER_MAX_AGE_H) || rosterCache.DEFAULT_MAX_AGE_HOURS;
+    let guilds = null;
+    let memberMap = null;
 
-    // 네 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
-    const { guilds, memberMap } = mergeTrackedGuilds(guildResults);
+    const cachedRoster = rosterCache.readRosterFile(fs, rosterFile);
+    const cachedData = cachedRoster ? rosterCache.deserializeRoster(cachedRoster) : null;
+
+    if (cachedData && rosterCache.isRosterFresh(cachedRoster, rosterMaxAgeH)) {
+      guilds = cachedData.guilds;
+      memberMap = cachedData.memberMap;
+      const ageH = (rosterCache.rosterAgeMs(cachedRoster) / 3600000).toFixed(1);
+      console.log(`[roster] cache hit — ${memberMap.size}명, ${ageH}시간 경과 (길드 API 생략)`);
+    } else {
+      try {
+        // 네 길드를 각각 조회한다. 일부 길드 실패를 숨긴 채 부분 데이터만 보여주지 않도록
+        // 네 요청이 모두 성공해야 다음 단계로 진행한다.
+        const guildResults = await Promise.all(targetGuildIds.map(async (gid) => {
+          const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
+          const response = await authFetch(url);
+          if (isUnauthenticatedResponse(response)) {
+            invalidateSession(`guild ${gid} rejected session`);
+            const err = new Error("세션이 만료되었습니다");
+            err.status = 401;
+            throw err;
+          }
+          if (!response || response.code !== 200 || !response.result) {
+            const message = response && response.message ? response.message : "invalid response";
+            throw new Error(`길드 조회 실패 (${gid}): ${message}`);
+          }
+          return response.result;
+        }));
+
+        // 네 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
+        ({ guilds, memberMap } = mergeTrackedGuilds(guildResults));
+        if (rosterCache.writeRosterFile(fs, rosterFile, rosterCache.serializeRoster(guilds, memberMap))) {
+          console.log(`[roster] refreshed from guild API — ${memberMap.size}명 캐시 저장`);
+        }
+      } catch (err) {
+        if (cachedData) {
+          const ageH = (rosterCache.rosterAgeMs(cachedRoster) / 3600000).toFixed(1);
+          console.warn(`[roster] 길드 API 실패 (${err.message}) — ${ageH}시간 된 캐시로 폴 백`);
+          guilds = cachedData.guilds;
+          memberMap = cachedData.memberMap;
+        } else {
+          throw err;
+        }
+      }
+    }
 
     const members = [];
     const dailyMap = new Map();

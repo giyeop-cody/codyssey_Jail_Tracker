@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "collect": "node ../collect_all.js",
-    "check": "node --check server.js && node --check lib/github-sync.js && node --check lib/open-session.js && node --check public/app.js && node --check scripts/build-public-history.js",
+    "check": "node --check server.js && node --check lib/github-sync.js && node --check lib/open-session.js && node --check lib/roster-cache.js && node --check public/app.js && node --check scripts/build-public-history.js",
     "test": "node --test test/*.test.js"
   },
   "keywords": ["codyssey", "dashboard", "github-actions", "codespaces"],
