@@ -176,7 +176,7 @@ jobs:
 
       # 로스터 캐시 사용 여부는 서버 로그에서 확인 가능해야 한다.
       - name: Show roster cache decision
-        run: grep -E "\[roster\]" /tmp/server.log || echo "로스터 로그 라인 없음"
+        run: grep -E "\[roster\]|\[season\]" /tmp/server.log || echo "로스터 로그 라인 없음"
 
       - name: Upload collected data
         uses: actions/upload-artifact@v4
