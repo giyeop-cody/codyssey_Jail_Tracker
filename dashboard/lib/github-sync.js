@@ -19,6 +19,11 @@ function resolveGitHubConfig(env = process.env) {
     tokenSource,
     token,
     repository: env.GITHUB_REPOSITORY || "",
+    // 본 레포 외 세션 동기화 대상 (예: 공유 로스터 허브). "owner/repo"를 콤마로 나열.
+    extraRepositories: String(env.GH_SYNC_EXTRA_REPOS || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => /^[^/]+\/[^/]+$/.test(item)),
   };
 }
 
@@ -59,6 +64,7 @@ function createGitHubSyncService({
     lastSync: null,
     lastWorkflowDispatch: null,
     workflowTriggered: false,
+    extraSyncs: [],
     lastError: null,
   };
 
@@ -67,6 +73,7 @@ function createGitHubSyncService({
       ...state,
       configured: state.configured || !!(config.token && config.repository),
       repository: config.repository,
+      extraRepositories: config.extraRepositories,
     };
   }
 
@@ -136,6 +143,47 @@ function createGitHubSyncService({
       state.enabled = true;
       state.lastError = null;
       logger.log("[github-sync] ✅ Collect SECOM Data 실행 요청 완료");
+
+      // 추가 대상 레포(공유 로스터 허브 등) 동기화 — 본 레포 갱신을 막지 않도록 실패는 경고로만 남긴다.
+      state.extraSyncs = [];
+      for (const extra of config.extraRepositories) {
+        const entry = { repo: extra, secretUploaded: false, dispatched: false, error: null };
+        state.extraSyncs.push(entry);
+        try {
+          const extraApi = `https://api.github.com/repos/${extra}`;
+          const extraSecretApi = `${extraApi}/actions/secrets`;
+          const extraKeyResponse = await fetchImpl(`${extraSecretApi}/public-key`, { headers });
+          if (!extraKeyResponse.ok) {
+            throw new Error(`공개키 조회 실패: ${await githubApiError(extraKeyResponse)}`);
+          }
+          const extraKeyData = await extraKeyResponse.json();
+          const extraEncrypted = await encryptSecret(sessionId, extraKeyData.key);
+          const extraSecretResponse = await fetchImpl(`${extraSecretApi}/CODYSSEY_SESSION`, {
+            method: "PUT",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ encrypted_value: extraEncrypted, key_id: extraKeyData.key_id }),
+          });
+          if (!extraSecretResponse.ok && ![201, 204].includes(extraSecretResponse.status)) {
+            throw new Error(`CODYSSEY_SESSION 저장 실패: ${await githubApiError(extraSecretResponse)}`);
+          }
+          entry.secretUploaded = true;
+
+          const extraDispatchResponse = await fetchImpl(`${extraApi}/actions/workflows/${workflow}/dispatches`, {
+            method: "POST",
+            headers: { ...headers, "Content-Type": "application/json" },
+            body: JSON.stringify({ ref }),
+          });
+          if (extraDispatchResponse.status !== 204) {
+            throw new Error(`Collect workflow 실행 요청 실패: ${await githubApiError(extraDispatchResponse)}`);
+          }
+          entry.dispatched = true;
+          logger.log(`[github-sync] ✅ ${extra} 세션 동기화 + 수집 실행 요청 완료`);
+        } catch (err) {
+          entry.error = err.message || String(err);
+          logger.warn(`[github-sync] ⚠️ ${extra} 동기화 실패 (본 레포는 정상 완료): ${entry.error}`);
+        }
+      }
+
       return { success: true, error: null, ...getStatus() };
     } catch (err) {
       const message = secretUploaded

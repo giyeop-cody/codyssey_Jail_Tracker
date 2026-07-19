@@ -160,6 +160,9 @@ JSESSIONID 캡처 방법:
 
 > 세션은 Codyssey 쪽에서 만료되면 죽습니다. 수집이 `CODYSSEY_SESSION이 없거나 만료되었습니다`로 실패하면 새 값으로 갱신하세요.
 
+> **(선택) 공유 로스터 허브 연동**: `codyssey_roster_hub`(비공개)를 쓰는 환경이면 Secret `HUB_PAT`(허브 Contents:Read PAT)를 등록하세요. 허브 로스터가 신선하면 길드 API를 생략합니다. 미등록이면 기존 캐시/API 경로로 돌아갑니다. 대시보드 로그인으로 허브 레포의 `CODYSSEY_SESSION`까지 자동 갱신하려면 `GH_PAT_SYNC` PAT에 허브 권한(Secrets/Actions RW)을 주고 Codespace 비밀 `GH_SYNC_EXTRA_REPOS=<owner>/codyssey_roster_hub`를 추가하세요.
+
+
 ### 4. 최초 실행
 
 **Actions → Collect SECOM Data → Run workflow** → 성공하면 이어서 **Deploy to GitHub Pages**가 자동 실행됩니다. Pages 주소에 접속해 대시보드를 확인합니다.
