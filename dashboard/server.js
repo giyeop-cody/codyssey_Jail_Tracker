@@ -16,6 +16,7 @@ const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
 const { isCurrentlyInside, isOpenSession, hasOpenSessionOn, kstDateStrings, prevYearMonth } = require("./lib/open-session");
 const rosterCache = require("./lib/roster-cache");
+const { resolveSeasonWeek } = require("./lib/season-week");
 
 const fs = require("fs");
 
@@ -188,13 +189,20 @@ async function authFetch(url, options = {}) {
   return data;
 }
 
+// 시즌/주차 단일 결정 — env > 허브 로스터 meta > 기본값 (lib/season-week.js)
+function currentSeasonWeek() {
+  const roster = rosterCache.readRosterFile(fs, process.env.SECOM_ROSTER_FILE || "");
+  return resolveSeasonWeek({ env: process.env, roster });
+}
+
 // 세션 유효성 체크 (메인 페이지 호출해서 정상 응답 오는지)
 async function validateSession() {
   try {
     // usr.codyssey.kr/main은 인증과 무관하게 항상 SPA HTML을 반환하므로
     // 실제 인증이 필요한 길드 API로 JSESSIONID 유효성을 확인한다.
     const probeGuildId = TRACKED_GUILD_IDS[0];
-    const url = `${API_BASE}/guild/${probeGuildId}/detail?guildSeasonId=5&weekNo=9`;
+    const { seasonId, weekNo } = currentSeasonWeek();
+    const url = `${API_BASE}/guild/${probeGuildId}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
     const data = await authFetch(url, { method: "GET" });
     if (isUnauthenticatedResponse(data)) return false;
     return !!(data && data.code === 200 && data.result);
@@ -432,8 +440,9 @@ async function discoverGuilds(seasonId, weekNo, maxId = 50) {
 app.get("/api/guilds", async (req, res) => {
   try {
     if (!session.cookies["JSESSIONID"]) return res.status(401).json({ error: "로그인 필요", requireAuth: true });
-    const seasonId = parseInt(req.query.seasonId || "5", 10);
-    const weekNo = parseInt(req.query.weekNo || "9", 10);
+    const sw = currentSeasonWeek();
+    const seasonId = parseInt(req.query.seasonId, 10) || sw.seasonId;
+    const weekNo = parseInt(req.query.weekNo, 10) || sw.weekNo;
     const maxId = parseInt(req.query.maxId || "50", 10);
     const guilds = await discoverGuilds(seasonId, weekNo, maxId);
     res.json({ success: true, count: guilds.length, guilds });
@@ -443,8 +452,9 @@ app.get("/api/guilds", async (req, res) => {
 app.get("/api/guild/:guildId", async (req, res) => {
   try {
     const gid = req.params.guildId;
-    const seasonId = req.query.seasonId || 5;
-    const weekNo = req.query.weekNo || 9;
+    const sw = currentSeasonWeek();
+    const seasonId = req.query.seasonId || sw.seasonId;
+    const weekNo = req.query.weekNo || sw.weekNo;
     const url = `${API_BASE}/guild/${gid}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
     const data = await authFetch(url);
     if (isUnauthenticatedResponse(data)) {
@@ -477,7 +487,9 @@ app.post("/api/aggregate", async (req, res) => {
     if (!session.cookies["JSESSIONID"]) {
       return res.status(401).json({ error: "로그인이 필요합니다", requireAuth: true });
     }
-    const { seasonId = 5, weekNo = 9,
+    const sw = currentSeasonWeek();
+    if (sw.source === "roster") console.log(`[season] 허브 로스터 meta 적용 (season ${sw.seasonId}, week ${sw.weekNo})`);
+    const { seasonId = sw.seasonId, weekNo = sw.weekNo,
             year = new Date().getFullYear(), month = new Date().getMonth() + 1 } = req.body || {};
 
     // 요청 본문의 guildIds/allGuilds는 의도적으로 무시한다.
