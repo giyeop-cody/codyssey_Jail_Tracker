@@ -19,6 +19,9 @@ on:
         required: false
         default: ''
         type: string
+  # 외부 워치독 점화용 (2026-07-22: GitHub 스케줄러 정전 2회 관측)
+  repository_dispatch:
+    types: [external-collect]
 
 permissions:
   contents: read
