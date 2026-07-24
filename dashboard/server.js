@@ -535,6 +535,10 @@ app.post("/api/aggregate", async (req, res) => {
 
         // 네 길드의 member list를 mbrId 기준으로 하나의 Map에 병합한다.
         ({ guilds, memberMap } = mergeTrackedGuilds(guildResults));
+        // 사이트 측 멤버십 초기화(시즌/주기 전환 등)로 갱신 결과가 비어 오면
+        // 실패와 동일하게 취급해 캐시 폴 백 경로로 본낸다 (2026-07-24 사태:
+        // 빈 갱신으로 0명 data.json이 배포되는 사고가 있었다)
+        if (!memberMap.size) throw new Error("길드 멤버 0명 (갱신 결과가 빔)");
         if (rosterCache.writeRosterFile(fs, rosterFile, rosterCache.serializeRoster(guilds, memberMap))) {
           console.log(`[roster] refreshed from guild API — ${memberMap.size}명 캐시 저장`);
         }
