@@ -195,17 +195,15 @@ function currentSeasonWeek() {
   return resolveSeasonWeek({ env: process.env, roster });
 }
 
-// 세션 유효성 체크 (메인 페이지 호출해서 정상 응답 오는지)
+// 세션 유효성 체크 — GET /api/common/menu/my 치나리.
+// usr.codyssey.kr/main은 인증과 무관하게 항상 SPA HTML을 반환하고,
+// 길드 detail은 시즌 재편 구간에 code 400을 반환해 정상 세션도 '만료'로 오판했다 (2026-07-25 사고).
+// menu/my는 인증 필요 + 시즌·길드와 무관하게 항상 존재해 유일하게 신뢰 가능하다 (전수 실측 확정).
 async function validateSession() {
   try {
-    // usr.codyssey.kr/main은 인증과 무관하게 항상 SPA HTML을 반환하므로
-    // 실제 인증이 필요한 길드 API로 JSESSIONID 유효성을 확인한다.
-    const probeGuildId = TRACKED_GUILD_IDS[0];
-    const { seasonId, weekNo } = currentSeasonWeek();
-    const url = `${API_BASE}/guild/${probeGuildId}/detail?guildSeasonId=${seasonId}&weekNo=${weekNo}`;
-    const data = await authFetch(url, { method: "GET" });
+    const data = await authFetch(`${API_BASE}/api/common/menu/my`, { method: "GET" });
     if (isUnauthenticatedResponse(data)) return false;
-    return !!(data && data.code === 200 && data.result);
+    return !!(data && data.code === 200 && Array.isArray(data.result) && data.result.length);
   } catch (e) {
     return false;
   }
