@@ -60,6 +60,20 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: dashboard/artifacts
 
+      # 허브(비공개) 로스터를 폴 백으로 내려받는다 — 길드 API 재편 구간(2026-07-25:
+      # guild detail code 400)에 로컬 캐시가 없으면 직접 수집이 500으로 죽는다 (collect.yml과 동일 경로).
+      - name: Fetch shared roster from hub
+        if: ${{ github.event_name != 'workflow_run' }}
+        working-directory: dashboard
+        env:
+          HUB_PAT: ${{ secrets.HUB_PAT }}
+        run: |
+          if ! curl -sfL https://raw.githubusercontent.com/giyeop-cody/codyssey_commons/main/roster/fetch_hub_roster.cjs -o /tmp/fetch_hub_roster.cjs; then
+            echo "::notice::페처 다운로드 실패 — 자체 경로 사용"
+            exit 0
+          fi
+          node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
+
       # push 또는 workflow_dispatch 실행에는 연결된 수집 아티팩트가 없으므로 Secret으로 즉시 수집한다.
       - name: Collect data for direct deployment
         if: ${{ github.event_name != 'workflow_run' }}
@@ -67,6 +81,8 @@ jobs:
         env:
           PORT: 3001
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
+          SECOM_ROSTER_FILE: .roster-cache/roster.json
+          SECOM_ROSTER_MAX_AGE_H: '8'
           TZ: Asia/Seoul
         run: |
           set -euo pipefail
