@@ -14,7 +14,7 @@ const setCookie = require("set-cookie-parser");
 const path = require("path");
 const { createGitHubSyncService } = require("./lib/github-sync");
 const { TRACKED_GUILD_IDS, mergeTrackedGuilds } = require("./lib/tracked-guilds");
-const { isCurrentlyInside, isOpenSession, hasOpenSessionOn, kstDateStrings, prevYearMonth } = require("./lib/open-session");
+const { isCurrentlyInside, isOpenSession, hasOpenSessionOn, openSessionsOn, kstDateStrings, prevYearMonth } = require("./lib/open-session");
 const rosterCache = require("./lib/roster-cache");
 const { resolveSeasonWeek } = require("./lib/season-week");
 
@@ -672,7 +672,36 @@ app.post("/api/aggregate", async (req, res) => {
             return res.status(401).json({ error: "세션이 만료되었습니다", requireAuth: true });
           }
           if (!data.success) continue;
-          if (hasOpenSessionOn(data.detail_list || [], yesterdayStr)) insideIds.add(mid);
+          const open = openSessionsOn(data.detail_list || [], yesterdayStr);
+          if (!open.length) continue;
+          insideIds.add(mid);
+          // [월경계 버그1 수정] 전월 말일 입실 미퇴실자는 새 달 API에 기록이 없어 시간/일별이 전부 0으로 비었다.
+          // 새 달 1일 00:00부터 진행 중인 세션으로 합성해 표시한다 (carryOver 표기).
+          // 열림 상태에서만 합성하므로, 퇴실 기록 생기면 API 실데이터가 자연히 대신한다 (중복 집계 없음).
+          const row = members.find((m) => m.mbrId === mid);
+          if (row) {
+            const sec = Math.min(nowSecondsKst(), 12 * 3600); // 일일 인정 상한 12h (SECOM max_recog_hours)
+            if (sec > 0) {
+              row.days.push({
+                date: todayStr,
+                dayOfWeek: KOR_DOW[new Date(todayStr + "T00:00:00Z").getUTCDay()],
+                totalSeconds: sec, totalDuration: formatDur(sec), sessionCount: 1, carryOver: true,
+                sessions: [{ entry: "00:00:00", exit: null, duration: formatDur(sec), durationSeconds: sec, isMissing: true, missingType: "exit", carryOver: true }],
+              });
+              row.days.sort((a, b) => a.date.localeCompare(b.date));
+              row.totalSeconds += sec; row.totalRawSeconds += sec;
+              row.totalHours = Math.round(row.totalSeconds / 3600 * 100) / 100;
+              row.totalDuration = formatDur(row.totalSeconds);
+              row.attendedDays = row.days.length;
+              row.avgPerDay = row.days.length ? Math.round(row.totalSeconds / row.days.length / 3600 * 100) / 100 : 0;
+              row.missingSessions += 1;
+              if (!dailyMap.has(todayStr)) dailyMap.set(todayStr, new Map());
+              dailyMap.get(todayStr).set(mid, sec);
+              accumulateHours(hourMap, "00:00:00", null, sec, true);
+              // 공개 레포 run 로그에 mbrId를 남기지 않기 위해 이름만 기록 (대시보드 공개 표시 정보)
+              console.log(`[aggregate] 캐리오버 합성: ${(memberMap.get(mid) || {}).name || "?"} 전월말 ${open[0].entry_time} 입실 이어짐 → 1일 00:00~${formatDur(sec)}`);
+            }
+          }
         }
       }
     }
@@ -753,6 +782,14 @@ function formatDur(sec) {
   if (!sec || sec < 0) sec = 0;
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.floor(sec%60);
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+const KOR_DOW = ["일", "월", "화", "수", "목", "금", "토"];
+
+// KST 현재 시각의 자정 경과 초 — 캐리오버 진행 시간 계산용
+function nowSecondsKst() {
+  const n = new Date(Date.now() + 9 * 3600 * 1000);
+  return n.getUTCHours() * 3600 + n.getUTCMinutes() * 60 + n.getUTCSeconds();
 }
 
 function accumulateHours(hourMap, entryStr, exitStr, durationSec, isMissing) {

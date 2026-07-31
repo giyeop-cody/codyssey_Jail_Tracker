@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const { isCurrentlyInside, isOpenSession, kstDateStrings, prevYearMonth, hasOpenSessionOn } = require("../lib/open-session");
+const { isCurrentlyInside, isOpenSession, kstDateStrings, prevYearMonth, hasOpenSessionOn, openSessionsOn } = require("../lib/open-session");
 
 const SERVER_JS = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
 
@@ -91,8 +91,27 @@ test("hasOpenSessionOn: 목표 날짜에 열린 세션이 있을 때만 true", (
 
 test("server.js가 월 경계 전월 조회 패스를 포함한다", () => {
   assert.ok(SERVER_JS.includes("prevYearMonth("), "전월 계산 누락");
-  assert.ok(SERVER_JS.includes("hasOpenSessionOn("), "전월 열린 세션 스캔 누락");
+  assert.ok(SERVER_JS.includes("openSessionsOn("), "전월 열린 세션 스캔 누락");
+  // [2026-08-01] 캐리오버 합성: 전월 말 미퇴실자를 새 달 00:00 진행 세션으로 표시
+  assert.ok(SERVER_JS.includes("carryOver"), "캐리오버 합성 표기 누락");
+  assert.ok(SERVER_JS.includes("nowSecondsKst("), "진행 시간 계산 누락");
   assert.ok(SERVER_JS.includes("insideIds.add(mid)"), "입실 ID 수집 누락");
   // 전월 패스는 현재 월 집계이면서 어제가 요청 월 밖일 때만 발동해야 한다
   assert.ok(SERVER_JS.includes("isCurrentMonth && !yesterdayStr.startsWith(requestedKey)"), "월 경계 발동 조건 누락");
+});
+
+
+test("openSessionsOn: 목표 날짜의 열린 세션만 전부 반환", () => {
+  const detail = [
+    { date: "2026-07-31", sessions: [
+      { entry_time: "10:00:00", exit_time: "18:00:00", is_missing: false },
+      { entry_time: "23:10:00", exit_time: null, is_missing: true, duration_seconds: 0 },
+      { entry_time: "23:50:00", exit_time: null, is_missing: true, duration_seconds: 0 },
+    ]},
+  ];
+  const open = openSessionsOn(detail, "2026-07-31");
+  assert.equal(open.length, 2);
+  assert.equal(open[0].entry_time, "23:10:00");
+  assert.equal(openSessionsOn(detail, "2026-07-30").length, 0);
+  assert.equal(hasOpenSessionOn(detail, "2026-07-31"), true); // 래퍼 일관성
 });

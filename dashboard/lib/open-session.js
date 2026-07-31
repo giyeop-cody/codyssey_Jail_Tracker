@@ -38,13 +38,19 @@ function prevYearMonth(year, month) {
 // 한 멤버의 월 상세(detail_list)에서 목표 날짜에 열린 세션이 하나라도 있으면 true.
 // 월 경계 대응에서 전월 데이터를 스캔할 때 쓴다.
 function hasOpenSessionOn(detailList, targetDate) {
+  return openSessionsOn(detailList, targetDate).length > 0;
+}
+
+// 목표 날짜의 열린 세션 전부 반환 — 월 경계 캐리오버(새 달 진행중 세션 합성)에 사용.
+function openSessionsOn(detailList, targetDate) {
+  const open = [];
   for (const d of detailList || []) {
     if (d.date !== targetDate) continue;
     for (const s of d.sessions || []) {
-      if (isOpenSession(s)) return true;
+      if (isOpenSession(s)) open.push(s);
     }
   }
-  return false;
+  return open;
 }
 
-module.exports = { isOpenSession, isCurrentlyInside, kstDateStrings, prevYearMonth, hasOpenSessionOn };
+module.exports = { isOpenSession, isCurrentlyInside, kstDateStrings, prevYearMonth, hasOpenSessionOn, openSessionsOn };

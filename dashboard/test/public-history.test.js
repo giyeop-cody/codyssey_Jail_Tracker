@@ -13,7 +13,7 @@ const appJs = fs.readFileSync(path.join(dashboardDir, "public/app.js"), "utf8");
 const landingHtml = fs.readFileSync(path.join(dashboardDir, "public/index.html"), "utf8");
 const pagesWorkflow = fs.readFileSync(path.join(dashboardDir, "../.github/workflows/pages.yml"), "utf8");
 
-function fixture(year, month, mbrId) {
+function fixture(year, month, mbrId, ci = []) {
   return {
     meta: {
       year, month,
@@ -36,7 +36,7 @@ function fixture(year, month, mbrId) {
       guildNames: ["g3"],
       days: [],
     }],
-    topMembers: [], daily: [], weekly: [], hourly: [], weekday: [], currentlyInside: [],
+    topMembers: [], daily: [], weekly: [], hourly: [], weekday: [], currentlyInside: ci,
     records: { topDayByAttendance: null, topDayByHours: null, topWeek: null, peakHour: null },
   };
 }
@@ -89,4 +89,35 @@ test("정적 사이트 빌드가 여러 월을 보존하고 민감 필드를 제
   assert.equal(fs.existsSync(path.join(site, "app.js")), true);
 
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+
+test("빌드 시 과거 월 파일의 재실 스냅샷은 소거되고 현재 월만 유지된다 (월경계 버그2)", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "jail-ci-"));
+  const artifacts = path.join(root, "artifacts");
+  const months = path.join(artifacts, "months");
+  const site = path.join(root, "site");
+  fs.mkdirSync(months, { recursive: true });
+
+  const now = new Date(Date.now() + 9 * 3600 * 1000);
+  const curY = now.getUTCFullYear(), curM = now.getUTCMonth() + 1;
+  const ci = [{ name: "overnighter", level: 1 }];
+
+  fs.writeFileSync(path.join(months, "2020-01.json"), JSON.stringify(fixture(2020, 1, 300, ci)));
+  fs.writeFileSync(path.join(months, `${curY}-${String(curM).padStart(2, "0")}.json`), JSON.stringify(fixture(curY, curM, 301, ci)));
+
+  const result = spawnSync(process.execPath, [
+    path.join(dashboardDir, "scripts/build-public-history.js"), artifacts, site,
+  ], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const past = JSON.parse(fs.readFileSync(path.join(site, "data/2020-01.json"), "utf8"));
+  assert.deepEqual(past.currentlyInside, [], "과거 월 재실 잔존");
+  const cur = JSON.parse(fs.readFileSync(path.join(site, `data/${curY}-${String(curM).padStart(2, "0")}.json`), "utf8"));
+  assert.equal(cur.currentlyInside.length, 1, "현재 월 재실 소실");
+});
+
+test("공개 대시보드는 현재 월 파일에서만 재실 목록을 렌더한다 (월경계 버그2 이중 잠금)", () => {
+  assert.match(appJs, /fileIsCurrentMonth/);
+  assert.match(appJs, /fileIsCurrentMonth \? \(DATA\.currentlyInside \|\| \[\]\) : \[\]/);
 });

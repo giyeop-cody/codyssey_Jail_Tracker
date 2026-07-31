@@ -267,7 +267,10 @@ function render() {
   const activeMembers = members.filter(x => x.totalSeconds > 0);
   const totalSec = activeMembers.reduce((s, m) => s + m.totalSeconds, 0);
   const totalMissing = activeMembers.reduce((s, m) => s + m.missingSessions, 0);
-  const inside = DATA.currentlyInside || [];
+  // [월경계 버그2 이중 잠금] 재실은 "지금" 데이터 — 현재 월 파일에서만 표시 (과거 월 스냅샷의 얼어붙은 재실 방지)
+  const nowKst = new Date(Date.now() + 9 * 3600 * 1000);
+  const fileIsCurrentMonth = m.year === nowKst.getUTCFullYear() && Number(m.month) === nowKst.getUTCMonth() + 1;
+  const inside = fileIsCurrentMonth ? (DATA.currentlyInside || []) : [];
   const loadedGuilds = Array.isArray(m.guilds) ? m.guilds : [];
   const guildNames = loadedGuilds.map(g => g.guildName).filter(Boolean).join(', ');
   const scopeLabel = `${loadedGuilds.length || 4}개 길드 통합${guildNames ? ` (${guildNames})` : ''}`;

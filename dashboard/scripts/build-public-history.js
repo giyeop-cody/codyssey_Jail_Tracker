@@ -87,6 +87,26 @@ function sanitizeMonthlyFiles(rawFiles) {
   return updated;
 }
 
+// [월경계 버그2 수정] 재실(입실 중) 목록은 "지금" 데이터라 과거 월 스냅샷에 남으면 안 된다.
+// 월이 바뀌면 그 달 파일의 currentlyInside는 갱신이 멈추는데 스냅샷 그대로 표시되던 문제 소거.
+// 현재 월 파일만 재실을 유지하고, 과거 월 파일은 비운다.
+function stripStaleCurrentlyInside() {
+  const now = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const curKey = monthKey(now.getUTCFullYear(), now.getUTCMonth() + 1);
+  for (const name of fs.readdirSync(dataDir)) {
+    if (!/^\d{4}-(0[1-9]|1[0-2])\.json$/.test(name)) continue;
+    const key = name.slice(0, -5);
+    if (key === curKey) continue;
+    const p = path.join(dataDir, name);
+    const d = JSON.parse(fs.readFileSync(p, "utf8"));
+    if (Array.isArray(d.currentlyInside) && d.currentlyInside.length) {
+      d.currentlyInside = [];
+      fs.writeFileSync(p, JSON.stringify(d));
+      console.log(`과거 월 재실 스냅샷 소거: ${key}`);
+    }
+  }
+}
+
 function buildManifest() {
   const months = fs.readdirSync(dataDir)
     .filter(name => /^\d{4}-(0[1-9]|1[0-2])\.json$/.test(name))
@@ -130,6 +150,7 @@ async function main() {
   const rawFiles = discoverRawMonthlyFiles();
   if (!rawFiles.length) throw new Error("수집 아티팩트를 찾지 못했습니다.");
   const updated = sanitizeMonthlyFiles(rawFiles);
+  stripStaleCurrentlyInside();
   const manifest = buildManifest();
   fs.writeFileSync(path.join(siteDir, ".nojekyll"), "");
 
