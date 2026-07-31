@@ -24,10 +24,17 @@
 const fs = require("fs");
 const path = require("path");
 
+// 월/년 경계 판정은 KST(UTC+9) 기준으로 고정 (런너 TZ 무관).
+// 런너 로컬(UTC) 날짜 사용 시 KST 1일 00:00~08:59에 전 달을 바라보는 어긋남 발생 — 2026-08-01 월경계 장애 원인.
+function kstNowParts() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+}
+
 const CONFIG = {
   baseUrl: "https://api.usr.codyssey.kr/rest/secom/detail",
-  year: new Date().getFullYear(),
-  month: new Date().getMonth() + 1,
+  year: kstNowParts().year,
+  month: kstNowParts().month,
   mbrIds: null,
   fromGuildFile: null,
   outputFile: "secom_result.json",

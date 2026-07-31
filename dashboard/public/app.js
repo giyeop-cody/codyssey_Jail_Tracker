@@ -215,10 +215,27 @@ async function loadData() {
       DATA = await loadPublicData(year, month);
       render();
     } catch (err) {
-      DATA = null;
-      document.getElementById('app').innerHTML = err.code === 'MONTH_NOT_FOUND'
-        ? publicMonthUnavailableHtml(year, month, err.message)
-        : publicSessionSetupHtml(err.message);
+      // 월/년 경계: 새 달 첫 파일이 아직 없으면 지난달로 자동 폴백 후 안내 배너 표시
+      // (수집기·대시보드 모두 KST 월 기준이지만 스케줄 지연으로 첫 파일이 늦을 수 있음)
+      if (err.code === 'MONTH_NOT_FOUND') {
+        const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+        try {
+          DATA = await loadPublicData(prev.year, prev.month);
+          currentYear = prev.year; currentMonth = prev.month;
+          render();
+          const note = document.createElement('div');
+          note.className = 'card span-12';
+          note.style.cssText = 'max-width:760px;margin:0 auto 16px;padding:12px 16px;border-left:4px solid var(--accent)';
+          note.innerHTML = `📅 <strong>${year}년 ${month}월 데이터가 아직 수집 전</strong>이라 ${prev.year}년 ${prev.month}월을 표시 중입니다. 새 달 첫 수집은 KST 기준 자정부터 진행됩니다.`;
+          document.getElementById('app').prepend(note);
+        } catch (e2) {
+          DATA = null;
+          document.getElementById('app').innerHTML = publicMonthUnavailableHtml(year, month, err.message);
+        }
+      } else {
+        DATA = null;
+        document.getElementById('app').innerHTML = publicSessionSetupHtml(err.message);
+      }
     }
     return;
   }

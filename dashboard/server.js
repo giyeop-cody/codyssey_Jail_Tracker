@@ -487,8 +487,10 @@ app.post("/api/aggregate", async (req, res) => {
     }
     const sw = currentSeasonWeek();
     if (sw.source === "roster") console.log(`[season] 허브 로스터 meta 적용 (season ${sw.seasonId}, week ${sw.weekNo})`);
+    // 월/년 기본값은 KST 기준으로 고정 (UTC 사용 시 KST 1일 00:00~08:59 전 달 어긋남 — 2026-08-01 월경계 이슈)
+    const kst = new Date(Date.now() + 9 * 3600 * 1000);
     const { seasonId = sw.seasonId, weekNo = sw.weekNo,
-            year = new Date().getFullYear(), month = new Date().getMonth() + 1 } = req.body || {};
+            year = kst.getUTCFullYear(), month = kst.getUTCMonth() + 1 } = req.body || {};
 
     // 요청 본문의 guildIds/allGuilds는 의도적으로 무시한다.
     // UI, Actions, 외부 호출 모두 항상 3·4·5·6 길드 멤버를 하나의 memberMap으로 합친다.

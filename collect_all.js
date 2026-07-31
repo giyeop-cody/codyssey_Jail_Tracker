@@ -15,13 +15,20 @@ const { execSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
+// 월/년 경계 판정은 KST(UTC+9) 기준으로 고정 (런너 TZ 무관) — collect_secom.js와 동일 규칙 (2026-08-01 월경계 장애 원인 수정)
+function kstNowParts() {
+  const d = new Date(Date.now() + 9 * 3600 * 1000);
+  return { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1 };
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
+  const kst = kstNowParts();
   const cfg = {
     start: 1, end: 10, guilds: null,
     season: 5, week: 9,
-    year: new Date().getFullYear(),
-    month: new Date().getMonth() + 1,
+    year: kst.year,
+    month: kst.month,
     outDir: ".",
     delay: 300,
   };
