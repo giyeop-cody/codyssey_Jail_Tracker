@@ -79,12 +79,12 @@ jobs:
           node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
 
       # 수집 간격 하한 게이트 (2026-08-01 승인안 ①): 마지막 수집 시각(Pages 공개본 meta.collectedAt)
-      # 기준 COLLECT_MIN_INTERVAL_MIN분(기본 30) 미만 재발화면 세션/집계를 통째로 스킵 — codyssey 호출 0건.
+      # 기준 COLLECT_MIN_INTERVAL_MIN분(기본 60) 미만 재발화면 세션/집계를 통째로 스킵 — codyssey 호출 0건.
       - name: Interval gate
         id: gate
         env:
           BACKFILL_FROM: ${{ github.event.inputs.backfill_from || '' }}
-          GATE_MIN: ${{ vars.COLLECT_MIN_INTERVAL_MIN || '30' }}
+          GATE_MIN: ${{ vars.COLLECT_MIN_INTERVAL_MIN || '60' }}
         run: |
           if [ -n "$BACKFILL_FROM" ]; then echo "백필 실행 — 게이트 우회"; exit 0; fi
           YM=$(TZ=Asia/Seoul date +%Y-%m)

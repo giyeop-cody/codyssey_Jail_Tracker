@@ -37,7 +37,7 @@ Codyssey **3·4·5·6길드** 멤버의 SECOM 출입/학습 기록을 하나로 
 ### 갱신 주기 설계
 
 - 입퇴실 기록은 빠르게 바뀌므로 **30분 주기 수집**(GitHub Actions cron).
-- 중복 발화 방지: 마지막 수집(공개본 meta.collectedAt) 후 30분 미만 run은 **간격 게이트**가 세션/집계 전체를 스킵(codyssey 호출 0건). `COLLECT_MIN_INTERVAL_MIN`(Repository Variable)로 조정, 백필 수동 실행은 우회.
+- 중복 발화 방지: 마지막 수집(공개본 meta.collectedAt) 후 60분 미만 run은 **간격 게이트**가 세션/집계 전체를 스킵(codyssey 호출 0건). `COLLECT_MIN_INTERVAL_MIN`(Repository Variable)로 조정, 백필 수동 실행은 우회.
 - 로스터(멤버 mbrId·이름·레벨·프로필 매핑)는 준정적 데이터라 **8시간 신선하면 길드 API 생략**(하루 3~4회 갱신 수준). 만료 시에만 길드 API 재조회, 실패 시 오래된 캐시로 폴 백한다.
 - GitHub 스케줄러가 30분 간격을 지키지 못하는 경우가 있어(실측 평균 배달 82~110분) **30분 슬롯당 4개의 크론 스트림**으로 발화 기회를 넓혔다.
 
