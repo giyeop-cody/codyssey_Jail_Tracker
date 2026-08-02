@@ -78,7 +78,30 @@ jobs:
           fi
           node /tmp/fetch_hub_roster.cjs --mode jail --file .roster-cache/roster.json
 
+      # 수집 간격 하한 게이트 (2026-08-01 승인안 ①): 마지막 수집 시각(Pages 공개본 meta.collectedAt)
+      # 기준 COLLECT_MIN_INTERVAL_MIN분(기본 30) 미만 재발화면 세션/집계를 통째로 스킵 — codyssey 호출 0건.
+      - name: Interval gate
+        id: gate
+        env:
+          BACKFILL_FROM: ${{ github.event.inputs.backfill_from || '' }}
+          GATE_MIN: ${{ vars.COLLECT_MIN_INTERVAL_MIN || '30' }}
+        run: |
+          if [ -n "$BACKFILL_FROM" ]; then echo "백필 실행 — 게이트 우회"; exit 0; fi
+          YM=$(TZ=Asia/Seoul date +%Y-%m)
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          LAST=$(curl -sfL "https://${GITHUB_REPOSITORY_OWNER}.github.io/${REPO_NAME}/data/${YM}.json" \
+            | python3 -c "import json,sys;print(json.load(sys.stdin).get('meta',{}).get('collectedAt') or '')" || true)
+          if [ -z "$LAST" ]; then echo "이전 수집 시각 확인 불가 → 수집 진행"; exit 0; fi
+          AGE=$(( ( $(date +%s) - $(date -d "$LAST" +%s) ) / 60 ))
+          if [ "$AGE" -lt "$GATE_MIN" ]; then
+            echo "::notice::수집 간격 하한(${GATE_MIN}분) 미만 — 마지막 수집 ${AGE}분 전. 스킵 (codyssey 호출 0건)"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "마지막 수집 ${AGE}분 전 → 수집 진행"
+          fi
+
       - name: Verify session secret
+        if: steps.gate.outputs.skip != 'true'
         env:
           CODYSSEY_SESSION: ${{ secrets.CODYSSEY_SESSION }}
         run: |
@@ -88,6 +111,7 @@ jobs:
           fi
 
       - name: Collect merged guild data
+        if: steps.gate.outputs.skip != 'true'
         working-directory: dashboard
         env:
           PORT: 3000
@@ -187,6 +211,7 @@ jobs:
         run: grep -E "\[roster\]|\[season\]" /tmp/server.log || echo "로스터 로그 라인 없음"
 
       - name: Upload collected data
+        if: steps.gate.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: secom-data-${{ github.run_id }}
