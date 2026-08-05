@@ -12,7 +12,11 @@
 //    이걸 무한정 입실로 볼 수는 없다. 그래서 이틀(오늘+어제) 창으로 제한한다.
 
 function isOpenSession(session) {
-  return !!(session && session.entry_time && !session.exit_time && session.is_missing);
+  if (!session || !session.entry_time) return false;
+  // 2026-08-05 사이트 개편 이후: 진행 중 세션은 is_ongoing=true가 공식 신호
+  // (exit_time=""/null, is_missing=false로 남음). 개편 전 형식(is_missing=true)은 아래 호환 분기.
+  if (session.is_ongoing === true) return true;
+  return !session.exit_time && !!session.is_missing;
 }
 
 function isCurrentlyInside(dayDate, session, todayStr, yesterdayStr) {

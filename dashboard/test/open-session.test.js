@@ -57,6 +57,20 @@ test("퇴실이 없어도 is_missing이 아니면 입실로 보지 않는다 (�
   assert.equal(isCurrentlyInside("2026-07-19", weird, "2026-07-19", "2026-07-18"), false);
 });
 
+// 2026-08-05 사이트 개편 이후 응답 형식: 진행 중 세션은 exit_time=""(빈 문자열)+is_ongoing=true
+const ongoingNewFormat = { entry_time: "14:19:53", exit_time: "", is_missing: false, is_ongoing: true, duration_seconds: 0 };
+const autoCutNewFormat = { entry_time: "23:10:00", exit_time: "23:59:59", is_missing: false, is_ongoing: false, duration_seconds: 3000 };
+
+test("[개편 대응] is_ongoing=true인 오늘 진행 중 세션은 입실 중이다", () => {
+  assert.equal(isOpenSession(ongoingNewFormat), true);
+  assert.equal(isCurrentlyInside("2026-08-05", ongoingNewFormat, "2026-08-05", "2026-08-04"), true);
+});
+
+test("[개편 대응] 자정 자동 컷(23:59:59)+is_ongoing=false는 입실로 보지 않는다", () => {
+  assert.equal(isOpenSession(autoCutNewFormat), false);
+  assert.equal(isCurrentlyInside("2026-08-05", autoCutNewFormat, "2026-08-05", "2026-08-04"), false);
+});
+
 test("입실 기록 자체가 없으면 입실 중이 아니다", () => {
   const noEntry = { entry_time: null, exit_time: null, is_missing: true };
   assert.equal(isCurrentlyInside("2026-07-18", noEntry, "2026-07-19", "2026-07-18"), false);
